@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "410266396789",
+    "project_id": "sicce-2026",
+    "storage_bucket": "sicce-2026.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:410266396789:android:d6eeb5faf491095c76b03c",
+        "android_client_info": {
+          "package_name": "edu.cobach.app_sicce"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCsfpkMyay8pQR2UykgZi7QZ_bRfNxt_uo"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
