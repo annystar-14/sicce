@@ -20,7 +20,7 @@ class Alumno{
       matricula: data['matricula'] ?? '',
       nombre: data['nombre'] ?? '',
       curp: data['curp'] ?? '',
-      grado: data['grado'] ?? 0,
+      grado: data['grado']?.toString() ?? '',
       grupo: data['grupo'] ?? '',
     );
   }

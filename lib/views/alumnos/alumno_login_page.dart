@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../../models/alumnos.dart';
 import 'dashboard_alumno.dart';
 
 class AlumnoLoginPage extends StatefulWidget {
@@ -16,65 +17,59 @@ class _AlumnoLoginPageState extends State<AlumnoLoginPage> {
   bool isLoading = false;
   String? error;
 
-Future<void> loginAlumno() async {
-  setState(() {
-    isLoading = true;
-    error = null;
-  });
-
-  try {
-    final doc = await FirebaseFirestore.instance
-        .collection('alumnos')
-        .doc(matriculaController.text.trim())
-        .get();
-    print(doc.exists);   //
-    print(doc.data());   ///
-    if (!doc.exists) {
-      setState(() {
-        error = "Alumno no encontrado";
-      });
-    } else {
-      final data = doc.data()!;
-
-      print(data);       
-print(data.keys);
-
-      final curpDB = data['curp'].toString().trim().toUpperCase();
-      final curpInput = curpController.text.trim().toUpperCase();
-
-      print("DB: $curpDB");
-      print("INPUT: $curpInput");
-
-      if (curpDB == curpInput) {
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (_) => const AlumnoHomePage(),
-          ),
-        );
-      } else {
-        setState(() {
-          error = "CURP incorrecta";
-        });
-      }
-    }
-  } catch (e) {
+  Future<void> loginAlumno() async {
     setState(() {
-      error = "Error: $e";
+      isLoading = true;
+      error = null;
+    });
+
+    try {
+      final query = await FirebaseFirestore.instance
+          .collection('alumnos')
+          .where('matricula', isEqualTo: matriculaController.text.trim())
+          .limit(1)
+          .get();
+
+      if (query.docs.isEmpty) {
+        setState(() {
+          error = "Alumno no encontrado";
+        });
+      } else {
+        final data = query.docs.first.data();
+
+        final curpDB = data['curp'].toString().trim().toUpperCase();
+        final curpInput = curpController.text.trim().toUpperCase();
+
+        if (curpDB == curpInput) {
+          final alumno = Alumno.fromMap(data);
+
+          if (!mounted) return;
+
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => AlumnoHomePage(alumno: alumno)),
+          );
+        } else {
+          setState(() {
+            error = "CURP incorrecta";
+          });
+        }
+      }
+    } catch (e) {
+      setState(() {
+        error = "Error: $e";
+      });
+    }
+
+    setState(() {
+      isLoading = false;
     });
   }
-
-  setState(() {
-    isLoading = false;
-  });
-}
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text("Alumno - SICCE"),
-      ),
+      appBar: AppBar(title: const Text("Alumno - SICCE")),
       body: Padding(
         padding: const EdgeInsets.all(20),
         child: Column(
@@ -99,10 +94,7 @@ print(data.keys);
             if (error != null)
               Padding(
                 padding: const EdgeInsets.only(top: 10),
-                child: Text(
-                  error!,
-                  style: const TextStyle(color: Colors.red),
-                ),
+                child: Text(error!, style: const TextStyle(color: Colors.red)),
               ),
           ],
         ),

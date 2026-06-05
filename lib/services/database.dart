@@ -20,29 +20,28 @@ class DatabaseService {
   }
 
   Future<String> vincularAlumno(String matricula) async {
+    final query = await FirebaseFirestore.instance
+        .collection('alumnos')
+        .where('matricula', isEqualTo: matricula.trim())
+        .limit(1)
+        .get();
 
-    final doc = await FirebaseFirestore.instance
-    .collection('alumnos')
-    .doc(matricula.trim())
-    .get();
-
-    if (!doc.exists) {
+    if (query.docs.isEmpty) {
       return "Alumno no encontrado";
     }
 
-    final data = doc.data()!;
+    final data = query.docs.first.data();
 
-    if(data.containsKey('padreId') &&
-    data['padreId'] != null &&
-    data['padreId'] != "") 
-    {
+    if (data.containsKey('padreId') &&
+        data['padreId'] != null &&
+        data['padreId'] != "") {
       return "Alumno ya vinculado";
     }
 
     return "ok";
   }
 
-  //consulta 
+  //consulta
 
   Future<Map<String, dynamic>?> obtenerAlumnoDelPadre() async {
     final uid = FirebaseAuth.instance.currentUser!.uid;
@@ -52,7 +51,7 @@ class DatabaseService {
         .where('padreId', isEqualTo: uid)
         .limit(1)
         .get();
-    
+
     if (query.docs.isEmpty) {
       return null;
     }

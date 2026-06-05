@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'views/alumnos/alumno_login_page.dart';
 import 'viewmodels/dashboard_padre.dart';
+import 'viewmodels/dashboard_alumno.dart';
 
 //PALETA DE COLORES DE TOMADO DE CANVA
 //https://www.canva.com/design/DAHByoEiWdQ/KIicJ_nqgwmEGCFJ0YqEdw/edit
@@ -26,6 +27,7 @@ class MyApp extends StatelessWidget {
     return MultiProvider( providers: [
       ChangeNotifierProvider(create: (_) => AuthViewModel()),
       ChangeNotifierProvider(create: (_) => DashboardPadreViewModel()),
+      ChangeNotifierProvider(create: (_) => DashboardAlumnoViewModel()),
     ],
       child: MaterialApp(
         debugShowCheckedModeBanner: false,

@@ -21,48 +21,41 @@ class AuthViewModel extends ChangeNotifier {
       final user = await _auth.login(email, password);
 
       if (user != null) {
-        await asegurarUsuarioFirestore(); // IMPORTANTE
+        await asegurarUsuarioFirestore();
       }
 
       isLoading = false;
       notifyListeners();
 
       return user != null;
-} on FirebaseAuthException catch (e) {
+    } on FirebaseAuthException catch (e) {
+      if (e.code == 'invalid-credential') {
+        error = "Correo o contraseña incorrectos";
+      } else if (e.code == 'user-not-found') {
+        error = "Usuario no encontrado";
+      } else if (e.code == 'wrong-password') {
+        error = "Contraseña incorrecta";
+      } else if (e.code == 'invalid-email') {
+        error = "Correo inválido";
+      } else {
+        error = "Error de autenticación";
+      }
 
-  if (e.code == 'invalid-credential') {
-    error = "Correo o contraseña incorrectos";
-  } 
-  else if (e.code == 'user-not-found') {
-    error = "Usuario no encontrado";
-  } 
-  else if (e.code == 'wrong-password') {
-    error = "Contraseña incorrecta";
-  } 
-  else if (e.code == 'invalid-email') {
-    error = "Correo inválido";
-  } 
-  else {
-    error = "Error de autenticación";
+      isLoading = false;
+      notifyListeners();
+
+      return false;
+    } catch (e) {
+      error = "Ocurrió un error inesperado";
+
+      isLoading = false;
+      notifyListeners();
+
+      return false;
+    }
   }
 
-  isLoading = false;
-  notifyListeners();
-
-  return false;
-
-} catch (e) {
-
-  error = "Ocurrió un error inesperado";
-
-  isLoading = false;
-  notifyListeners();
-
-  return false;
-}
-  }
-
-  // funcion para crear un usuarios en firestore cuando no estan registrados
+  // función para crear un usuario en Firestore cuando no está registrado
   Future<void> asegurarUsuarioFirestore() async {
     final user = FirebaseAuth.instance.currentUser;
 
@@ -84,7 +77,7 @@ class AuthViewModel extends ChangeNotifier {
     }
   }
 
-  //REGISTRO
+  // REGISTRO
   Future<bool> registerCompleto(
     String nombre,
     String email,
@@ -96,7 +89,6 @@ class AuthViewModel extends ChangeNotifier {
       error = null;
       notifyListeners();
 
-      //metodo para vincular alumno a padre, si no se puede vincular no se crea el usuario
       final validacion = await _db.vincularAlumno(matricula);
 
       if (validacion != "ok") {
@@ -125,9 +117,18 @@ class AuthViewModel extends ChangeNotifier {
         rol: "padre",
       );
 
-      await FirebaseFirestore.instance.collection('alumnos').doc(matricula.trim()).update({
-        'padreId': user.uid,
-      });
+      final alumnoQuery = await FirebaseFirestore.instance
+          .collection('alumnos')
+          .where('matricula', isEqualTo: matricula.trim())
+          .limit(1)
+          .get();
+
+      if (alumnoQuery.docs.isNotEmpty) {
+        await alumnoQuery.docs.first.reference.update({
+          'padreId': user.uid,
+          'estadoHuella': 'pendiente',
+        });
+      }
 
       isLoading = false;
       notifyListeners();
@@ -136,10 +137,8 @@ class AuthViewModel extends ChangeNotifier {
     } catch (e) {
       error = e.toString();
 
-
       isLoading = false;
       notifyListeners();
-
 
       return false;
     }
