@@ -1,33 +1,43 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
-
 class Asistencia {
-  final String fecha; // Formato: yyyy-MM-dd
-  final DateTime? entrada;
-  final DateTime? salida;
-  final String estado; // 'Asistencia', 'Retardo', 'Falta', 'Pendiente'
+  final String matricula;
+  final String nombre;
+  final String fecha;
+  final String entrada;
+  final String salida;
+  final String estado;
+  final String origen;
 
   Asistencia({
+    required this.matricula,
+    required this.nombre,
     required this.fecha,
-    this.entrada,
-    this.salida,
+    required this.entrada,
+    required this.salida,
     required this.estado,
+    required this.origen,
   });
 
   factory Asistencia.fromMap(Map<String, dynamic> data) {
     return Asistencia(
-      fecha: data['fecha'] ?? '',
-      entrada: data['entrada'] != null ? (data['entrada'] as Timestamp).toDate() : null,
-      salida: data['salida'] != null ? (data['salida'] as Timestamp).toDate() : null,
-      estado: data['estado'] ?? 'Pendiente',
+      matricula: data['matricula']?.toString() ?? '',
+      nombre: data['nombre']?.toString() ?? '',
+      fecha: data['fecha']?.toString() ?? '',
+      entrada: data['entrada']?.toString() ?? '',
+      salida: data['salida']?.toString() ?? '',
+      estado: data['estado']?.toString() ?? 'Pendiente',
+      origen: data['origen']?.toString() ?? '',
     );
   }
 
   Map<String, dynamic> toMap() {
     return {
+      'matricula': matricula,
+      'nombre': nombre,
       'fecha': fecha,
-      'entrada': entrada != null ? Timestamp.fromDate(entrada!) : null,
-      'salida': salida != null ? Timestamp.fromDate(salida!) : null,
+      'entrada': entrada,
+      'salida': salida,
       'estado': estado,
+      'origen': origen,
     };
   }
 }

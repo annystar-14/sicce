@@ -1,6 +1,7 @@
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
+
 import '../models/alumnos.dart';
 import '../models/asistencia.dart';
 
@@ -11,13 +12,30 @@ class PdfService {
   }) async {
     final pdf = pw.Document();
 
+    String formatearFecha(String fecha) {
+      try {
+        final p = fecha.split('-');
+        if (p.length != 3) return fecha;
+        return "${p[2]}/${p[1]}/${p[0]}";
+      } catch (_) {
+        return fecha;
+      }
+    }
+
+    String valor(String value) {
+      return value.trim().isEmpty ? "Pendiente" : value;
+    }
+
+    final nombreAlumno = alumno.nombreCompleto.isNotEmpty
+        ? alumno.nombreCompleto
+        : "${alumno.nombre} ${alumno.apellidos}";
+
     pdf.addPage(
       pw.MultiPage(
         pageFormat: PdfPageFormat.letter,
         margin: const pw.EdgeInsets.all(32),
         build: (pw.Context context) {
           return [
-            // Encabezado institucional
             pw.Row(
               mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
               children: [
@@ -47,15 +65,17 @@ class PdfService {
                 ),
               ],
             ),
+
             pw.Divider(thickness: 2, color: PdfColor.fromHex("#194395")),
             pw.SizedBox(height: 15),
 
-            // Información del alumno
             pw.Container(
               padding: const pw.EdgeInsets.all(12),
               decoration: pw.BoxDecoration(
                 border: pw.Border.all(color: PdfColors.grey300),
-                borderRadius: const pw.BorderRadius.all(pw.Radius.circular(8)),
+                borderRadius: const pw.BorderRadius.all(
+                  pw.Radius.circular(8),
+                ),
               ),
               child: pw.Column(
                 crossAxisAlignment: pw.CrossAxisAlignment.start,
@@ -66,7 +86,7 @@ class PdfService {
                         "Alumno: ",
                         style: pw.TextStyle(fontWeight: pw.FontWeight.bold),
                       ),
-                      pw.Text(alumno.nombre),
+                      pw.Text(nombreAlumno),
                     ],
                   ),
                   pw.SizedBox(height: 6),
@@ -76,8 +96,10 @@ class PdfService {
                       pw.Row(
                         children: [
                           pw.Text(
-                            "Matricula: ",
-                            style: pw.TextStyle(fontWeight: pw.FontWeight.bold),
+                            "Matrícula: ",
+                            style: pw.TextStyle(
+                              fontWeight: pw.FontWeight.bold,
+                            ),
                           ),
                           pw.Text(alumno.matricula),
                         ],
@@ -86,9 +108,11 @@ class PdfService {
                         children: [
                           pw.Text(
                             "Grado/Grupo: ",
-                            style: pw.TextStyle(fontWeight: pw.FontWeight.bold),
+                            style: pw.TextStyle(
+                              fontWeight: pw.FontWeight.bold,
+                            ),
                           ),
-                          pw.Text("${alumno.grado}° ${alumno.grupo}"),
+                          pw.Text(alumno.gradoGrupo),
                         ],
                       ),
                     ],
@@ -96,20 +120,20 @@ class PdfService {
                 ],
               ),
             ),
+
             pw.SizedBox(height: 20),
 
-            // Titulo de la tabla
             pw.Text(
-              "Historial de Registros",
+              "Historial de Asistencias",
               style: pw.TextStyle(
                 fontSize: 14,
                 fontWeight: pw.FontWeight.bold,
                 color: PdfColor.fromHex("#0D0E4A"),
               ),
             ),
+
             pw.SizedBox(height: 8),
 
-            // Tabla de asistencia
             pw.TableHelper.fromTextArray(
               border: pw.TableBorder.all(color: PdfColors.grey300),
               headerStyle: pw.TextStyle(
@@ -124,30 +148,17 @@ class PdfService {
               ),
               cellHeight: 25,
               cellAlignment: pw.Alignment.centerLeft,
-              headers: ['Fecha', 'Entrada', 'Salida', 'Estado'],
+              headers: [
+                'Fecha',
+                'Entrada',
+                'Salida',
+                'Estado',
+              ],
               data: historial.map((reg) {
-                String formatTime(DateTime? dt) {
-                  if (dt == null) return "Pendiente";
-                  final hour = dt.hour == 0 ? 12 : (dt.hour > 12 ? dt.hour - 12 : dt.hour);
-                  final min = dt.minute.toString().padLeft(2, '0');
-                  final ampm = dt.hour >= 12 ? "PM" : "AM";
-                  return "${hour.toString().padLeft(2, '0')}:$min $ampm";
-                }
-
-                String formatDate(String dateStr) {
-                  try {
-                    final parts = dateStr.split('-');
-                    if (parts.length != 3) return dateStr;
-                    return "${parts[2]}/${parts[1]}/${parts[0]}";
-                  } catch (_) {
-                    return dateStr;
-                  }
-                }
-
                 return [
-                  formatDate(reg.fecha),
-                  formatTime(reg.entrada),
-                  formatTime(reg.salida),
+                  formatearFecha(reg.fecha),
+                  valor(reg.entrada),
+                  valor(reg.salida),
                   reg.estado,
                 ];
               }).toList(),
@@ -157,7 +168,6 @@ class PdfService {
       ),
     );
 
-    // Mostrar vista de impresion/guardado nativo
     await Printing.layoutPdf(
       onLayout: (PdfPageFormat format) async => pdf.save(),
       name: "reporte_asistencias_${alumno.matricula}.pdf",

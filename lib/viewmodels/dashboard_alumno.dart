@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+
 import '../models/alumnos.dart';
 import '../models/asistencia.dart';
 
@@ -33,8 +34,14 @@ class DashboardAlumnoViewModel extends ChangeNotifier {
     return "${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}";
   }
 
+  String _getMesActual() {
+    final now = DateTime.now();
+    return "${now.year}-${now.month.toString().padLeft(2, '0')}";
+  }
+
   Future<void> cargarDatos() async {
     if (_alumno == null) return;
+
     final matricula = _alumno!.matricula;
 
     _isLoading = true;
@@ -42,52 +49,40 @@ class DashboardAlumnoViewModel extends ChangeNotifier {
 
     try {
       final fechaHoy = _getFechaHoy();
-      
-      // 1. Cargar asistencia de hoy
-      final docHoy = await FirebaseFirestore.instance
-          .collection('asistencias')
-          .doc('${matricula}_$fechaHoy')
-          .get();
+      final mesActual = _getMesActual();
 
-      if (docHoy.exists) {
-        _todayAsistencia = Asistencia.fromMap(docHoy.data()!);
-      } else {
-        _todayAsistencia = null;
-      }
-
-      // 2. Cargar historial completo
       final querySnapshot = await FirebaseFirestore.instance
-          .collection('asistencias')
+          .collection('asistencias_diarias')
           .where('matricula', isEqualTo: matricula)
+          .orderBy('fecha', descending: true)
           .get();
 
-      final now = DateTime.now();
-      final prefijoMes = "${now.year}-${now.month.toString().padLeft(2, '0')}";
+      _historial = [];
+      _todayAsistencia = null;
 
       _asistenciasCount = 0;
       _retardosCount = 0;
       _faltasCount = 0;
-      _historial = [];
 
       for (var doc in querySnapshot.docs) {
         final asistencia = Asistencia.fromMap(doc.data());
+
         _historial.add(asistencia);
 
-        // Contar estadísticas si pertenece al mes actual
-        if (asistencia.fecha.startsWith(prefijoMes)) {
-          if (asistencia.estado == 'Asistencia') {
-            _asistenciasCount++;
-          } else if (asistencia.estado == 'Retardo') {
+        if (asistencia.fecha == fechaHoy) {
+          _todayAsistencia = asistencia;
+        }
+
+        if (asistencia.fecha.startsWith(mesActual)) {
+          if (asistencia.estado == "Retardo") {
             _retardosCount++;
-          } else if (asistencia.estado == 'Falta') {
+          } else if (asistencia.estado == "Falta") {
             _faltasCount++;
+          } else {
+            _asistenciasCount++;
           }
         }
       }
-
-      // Ordenar historial por fecha descendente
-      _historial.sort((a, b) => b.fecha.compareTo(a.fecha));
-
     } catch (e) {
       print("Error al cargar datos del alumno: $e");
     }
@@ -96,70 +91,40 @@ class DashboardAlumnoViewModel extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> registrarEntrada() async {
+  // SOLO PARA PRUEBAS MANUALES
+  Future<void> registrarEntradaPrueba() async {
     if (_alumno == null) return;
-    final matricula = _alumno!.matricula;
-    final fechaHoy = _getFechaHoy();
 
     _isLoading = true;
     notifyListeners();
 
     try {
       final now = DateTime.now();
-      String estado = 'Asistencia';
-      
-      // Umbral: después de las 07:05 AM es Retardo
-      if (now.hour > 7 || (now.hour == 7 && now.minute > 5)) {
-        estado = 'Retardo';
-      }
 
-      final nuevaAsistencia = Asistencia(
-        fecha: fechaHoy,
-        entrada: now,
-        salida: null,
-        estado: estado,
-      );
+      final fecha =
+          "${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}";
 
-      final docRef = FirebaseFirestore.instance
-          .collection('asistencias')
-          .doc('${matricula}_$fechaHoy');
+      final hora =
+          "${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}:${now.second.toString().padLeft(2, '0')}";
 
-      await docRef.set({
-        'matricula': matricula,
-        ...nuevaAsistencia.toMap(),
-      });
+      final docId = "${_alumno!.matricula}_$fecha";
 
-      // Recargar datos
+      await FirebaseFirestore.instance
+          .collection('asistencias_diarias')
+          .doc(docId)
+          .set({
+        'matricula': _alumno!.matricula,
+        'nombre': _alumno!.nombreCompleto,
+        'fecha': fecha,
+        'entrada': hora,
+        'salida': '',
+        'estado': 'Asistencia',
+        'origen': 'App SICCE prueba',
+      }, SetOptions(merge: true));
+
       await cargarDatos();
     } catch (e) {
-      print("Error al registrar entrada: $e");
-      _isLoading = false;
-      notifyListeners();
-    }
-  }
-
-  Future<void> registrarSalida() async {
-    if (_alumno == null) return;
-    final matricula = _alumno!.matricula;
-    final fechaHoy = _getFechaHoy();
-
-    _isLoading = true;
-    notifyListeners();
-
-    try {
-      final now = DateTime.now();
-      final docRef = FirebaseFirestore.instance
-          .collection('asistencias')
-          .doc('${matricula}_$fechaHoy');
-
-      await docRef.update({
-        'salida': Timestamp.fromDate(now),
-      });
-
-      // Recargar datos
-      await cargarDatos();
-    } catch (e) {
-      print("Error al registrar salida: $e");
+      print("Error al registrar entrada de prueba: $e");
       _isLoading = false;
       notifyListeners();
     }

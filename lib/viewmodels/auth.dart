@@ -78,69 +78,80 @@ class AuthViewModel extends ChangeNotifier {
   }
 
   // REGISTRO
-  Future<bool> registerCompleto(
-    String nombre,
-    String email,
-    String password,
-    String matricula,
-  ) async {
-    try {
-      isLoading = true;
-      error = null;
-      notifyListeners();
+ Future<bool> registerCompleto(
+  String nombre,
+  String email,
+  String password,
+  String matricula,
+) async {
+  try {
+    isLoading = true;
+    error = null;
+    notifyListeners();
 
-      final validacion = await _db.vincularAlumno(matricula);
+    final matriculaLimpia = matricula.trim();
 
-      if (validacion != "ok") {
-        error = validacion;
+    final validacion = await _db.vincularAlumno(matriculaLimpia);
 
-        isLoading = false;
-        notifyListeners();
-
-        return false;
-      }
-
-      final user = await _auth.register(email, password);
-
-      if (user == null) {
-        error = "No se puede crear el usuario";
-        isLoading = false;
-        notifyListeners();
-
-        return false;
-      }
-
-      await _db.guardarUsuario(
-        uid: user.uid,
-        nombre: nombre,
-        email: email,
-        rol: "padre",
-      );
-
-      final alumnoQuery = await FirebaseFirestore.instance
-          .collection('alumnos')
-          .where('matricula', isEqualTo: matricula.trim())
-          .limit(1)
-          .get();
-
-      if (alumnoQuery.docs.isNotEmpty) {
-        await alumnoQuery.docs.first.reference.update({
-          'padreId': user.uid,
-          'estadoHuella': 'pendiente',
-        });
-      }
-
+    if (validacion != "ok") {
+      error = validacion;
       isLoading = false;
       notifyListeners();
-
-      return true;
-    } catch (e) {
-      error = e.toString();
-
-      isLoading = false;
-      notifyListeners();
-
       return false;
     }
+
+    final user = await _auth.register(
+      email.trim(),
+      password.trim(),
+    );
+
+    if (user == null) {
+      error = "No se pudo crear el usuario";
+      isLoading = false;
+      notifyListeners();
+      return false;
+    }
+
+    await _db.guardarUsuario(
+      uid: user.uid,
+      nombre: nombre.trim(),
+      email: email.trim(),
+      rol: "padre",
+    );
+
+    await FirebaseFirestore.instance
+        .collection('zktime_empleados')
+        .doc(matriculaLimpia)
+        .update({
+      'padreId': user.uid,
+    });
+
+    isLoading = false;
+    notifyListeners();
+
+    return true;
+  } on FirebaseAuthException catch (e) {
+    if (e.code == 'email-already-in-use') {
+      error = "Este correo ya está registrado";
+    } else if (e.code == 'invalid-email') {
+      error = "Correo inválido";
+    } else if (e.code == 'weak-password') {
+      error = "La contraseña es muy débil";
+    } else {
+      error = "Error al registrar usuario";
+    }
+
+    isLoading = false;
+    notifyListeners();
+
+    return false;
+  } catch (e) {
+    error = e.toString();
+
+    isLoading = false;
+    notifyListeners();
+
+    return false;
   }
+}
 }

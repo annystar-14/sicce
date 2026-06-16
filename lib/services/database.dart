@@ -1,8 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
-//no utilice librerias de auth y core por la logica
-
 class DatabaseService {
   final FirebaseFirestore _db = FirebaseFirestore.instance;
 
@@ -20,17 +18,16 @@ class DatabaseService {
   }
 
   Future<String> vincularAlumno(String matricula) async {
-    final query = await FirebaseFirestore.instance
-        .collection('alumnos')
-        .where('matricula', isEqualTo: matricula.trim())
-        .limit(1)
+    final doc = await _db
+        .collection('zktime_empleados')
+        .doc(matricula.trim())
         .get();
 
-    if (query.docs.isEmpty) {
-      return "Alumno no encontrado";
+    if (!doc.exists) {
+      return "Alumno no encontrado en el biométrico";
     }
 
-    final data = query.docs.first.data();
+    final data = doc.data()!;
 
     if (data.containsKey('padreId') &&
         data['padreId'] != null &&
@@ -41,13 +38,11 @@ class DatabaseService {
     return "ok";
   }
 
-  //consulta
-
   Future<Map<String, dynamic>?> obtenerAlumnoDelPadre() async {
     final uid = FirebaseAuth.instance.currentUser!.uid;
 
-    final query = await FirebaseFirestore.instance
-        .collection('alumnos')
+    final query = await _db
+        .collection('zktime_empleados')
         .where('padreId', isEqualTo: uid)
         .limit(1)
         .get();
@@ -57,5 +52,36 @@ class DatabaseService {
     }
 
     return query.docs.first.data();
+  }
+
+  Stream<List<Map<String, dynamic>>> obtenerAsistenciasAlumno(
+    String matricula,
+  ) {
+    return _db
+        .collection('asistencias')
+        .where('matricula', isEqualTo: matricula.trim())
+        .orderBy('fechaHora', descending: true)
+        .snapshots()
+        .map((snapshot) {
+      return snapshot.docs.map((doc) => doc.data()).toList();
+    });
+  }
+
+  Stream<Map<String, dynamic>?> obtenerUltimaAsistenciaAlumno(
+    String matricula,
+  ) {
+    return _db
+        .collection('asistencias')
+        .where('matricula', isEqualTo: matricula.trim())
+        .orderBy('fechaHora', descending: true)
+        .limit(1)
+        .snapshots()
+        .map((snapshot) {
+      if (snapshot.docs.isEmpty) {
+        return null;
+      }
+
+      return snapshot.docs.first.data();
+    });
   }
 }

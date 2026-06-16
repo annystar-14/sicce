@@ -3,22 +3,28 @@ import '../services/database.dart';
 import '../models/alumnos.dart';
 
 class DashboardPadreViewModel extends ChangeNotifier {
-
   final DatabaseService _db = DatabaseService();
 
   Alumno? alumno;
-
   bool isLoading = false;
+  String? error;
 
   Future<void> cargarAlumno() async {
+    try {
+      isLoading = true;
+      error = null;
+      alumno = null;
+      notifyListeners();
 
-    isLoading = true;
-    notifyListeners();
+      final data = await _db.obtenerAlumnoDelPadre();
 
-    final data = await _db.obtenerAlumnoDelPadre();
-
-    if (data != null) {
-      alumno = Alumno.fromMap(data);
+      if (data != null) {
+        alumno = Alumno.fromMap(data);
+      } else {
+        error = "No hay alumno vinculado";
+      }
+    } catch (e) {
+      error = "Error al cargar alumno: $e";
     }
 
     isLoading = false;

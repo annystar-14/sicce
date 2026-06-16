@@ -11,7 +11,7 @@ class AlumnoLoginPage extends StatefulWidget {
 }
 
 class _AlumnoLoginPageState extends State<AlumnoLoginPage> {
-  final TextEditingController curpController = TextEditingController();
+  final TextEditingController correoController = TextEditingController();
   final TextEditingController matriculaController = TextEditingController();
 
   bool isLoading = false;
@@ -24,34 +24,38 @@ class _AlumnoLoginPageState extends State<AlumnoLoginPage> {
     });
 
     try {
+      final correoInput = correoController.text.trim().toLowerCase();
+      final matriculaInput = matriculaController.text.trim();
+
       final query = await FirebaseFirestore.instance
-          .collection('alumnos')
-          .where('matricula', isEqualTo: matriculaController.text.trim())
+          .collection('zktime_empleados')
+          .where('correo', isEqualTo: correoInput)
           .limit(1)
           .get();
 
       if (query.docs.isEmpty) {
         setState(() {
-          error = "Alumno no encontrado";
+          error = "Correo no encontrado";
         });
       } else {
         final data = query.docs.first.data();
 
-        final curpDB = data['curp'].toString().trim().toUpperCase();
-        final curpInput = curpController.text.trim().toUpperCase();
+        final matriculaDB = data['matricula']?.toString().trim() ?? '';
 
-        if (curpDB == curpInput) {
+        if (matriculaDB == matriculaInput) {
           final alumno = Alumno.fromMap(data);
 
           if (!mounted) return;
 
           Navigator.push(
             context,
-            MaterialPageRoute(builder: (_) => AlumnoHomePage(alumno: alumno)),
+            MaterialPageRoute(
+              builder: (_) => AlumnoHomePage(alumno: alumno),
+            ),
           );
         } else {
           setState(() {
-            error = "CURP incorrecta";
+            error = "Matrícula incorrecta";
           });
         }
       }
@@ -61,40 +65,58 @@ class _AlumnoLoginPageState extends State<AlumnoLoginPage> {
       });
     }
 
-    setState(() {
-      isLoading = false;
-    });
+    if (mounted) {
+      setState(() {
+        isLoading = false;
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    correoController.dispose();
+    matriculaController.dispose();
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text("Alumno - SICCE")),
+      appBar: AppBar(
+        title: const Text("Alumno - SICCE"),
+      ),
       body: Padding(
         padding: const EdgeInsets.all(20),
         child: Column(
           children: [
             TextField(
-              controller: curpController,
-              decoration: const InputDecoration(labelText: "CURP"),
+              controller: correoController,
+              keyboardType: TextInputType.emailAddress,
+              decoration: const InputDecoration(
+                labelText: "Correo",
+              ),
             ),
             TextField(
               controller: matriculaController,
-              decoration: const InputDecoration(labelText: "Matrícula"),
+              obscureText: true,
+              decoration: const InputDecoration(
+                labelText: "Matrícula",
+              ),
             ),
             const SizedBox(height: 20),
-
             isLoading
                 ? const CircularProgressIndicator()
                 : ElevatedButton(
                     onPressed: loginAlumno,
                     child: const Text("Entrar"),
                   ),
-
             if (error != null)
               Padding(
                 padding: const EdgeInsets.only(top: 10),
-                child: Text(error!, style: const TextStyle(color: Colors.red)),
+                child: Text(
+                  error!,
+                  style: const TextStyle(color: Colors.red),
+                ),
               ),
           ],
         ),
