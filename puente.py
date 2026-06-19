@@ -1,17 +1,27 @@
-import sqlite3
-import firebase_admin
 import os
-from firebase_admin import credentials, firestore
-from datetime import datetime
 import traceback
+from datetime import datetime
+
+import psycopg2
+import firebase_admin
+from firebase_admin import credentials, firestore
+
 
 # =========================
 # CONFIGURACIÓN
 # =========================
 
 FIREBASE_KEY = r"C:\Users\laraa\proyectsAS\app_sicce\sicce-2026-firebase-adminsdk-fbsvc-6b52c7221c.json"
-ZKTIME_DB = r"C:\Program Files (x86)\ZKTimeNet3.0\ZKTimeNet.db"
-LOG_FILE = "sync.log"
+
+# ZKBioTime local
+POSTGRES_HOST = "127.0.0.1"
+POSTGRES_PORT = 7496
+POSTGRES_DB = "biotime"
+POSTGRES_USER = "postgres"
+POSTGRES_PASSWORD = ""  # CAMBIA ESTO
+
+LOG_FILE = "sync_zkbiotime.log"
+
 
 # =========================
 # FUNCIONES
@@ -25,6 +35,16 @@ def escribir_log(mensaje):
 def limpiar(valor):
     if valor is None:
         return ""
+    return str(valor).strip()
+
+
+def formatear_fecha_hora(valor):
+    if valor is None:
+        return ""
+
+    if isinstance(valor, datetime):
+        return valor.strftime("%Y-%m-%d %H:%M:%S")
+
     return str(valor).strip()
 
 
@@ -47,16 +67,14 @@ def separar_grado_grupo(valor):
 
 
 def convertir_sexo(valor):
-    valor = limpiar(valor)
+    valor = limpiar(valor).lower()
 
-    if valor == "0":
+    if valor in ["0", "m", "male", "masculino"]:
         return "M"
-    elif valor == "1":
+    elif valor in ["1", "f", "female", "femenino"]:
         return "F"
-    elif valor == "-1" or valor == "":
-        return ""
     else:
-        return valor
+        return ""
 
 
 def procesar_asistencia_diaria(db, matricula, nombre, fecha_hora):
@@ -94,7 +112,7 @@ def procesar_asistencia_diaria(db, matricula, nombre, fecha_hora):
                 "entrada": hora,
                 "salida": "",
                 "estado": estado,
-                "origen": "ZKTime MB160",
+                "origen": "ZKBioTime MB160",
                 "fechaSincronizacion": firestore.SERVER_TIMESTAMP
             })
         else:
@@ -128,21 +146,14 @@ conexion = None
 
 try:
     print("===================================")
-    print("INICIANDO SINCRONIZACIÓN")
+    print("INICIANDO SINCRONIZACIÓN ZKBIOTIME")
     print("===================================")
 
     print("Firebase:", FIREBASE_KEY)
-    print("DB:", ZKTIME_DB)
+    print("ZKBioTime DB:", POSTGRES_HOST, POSTGRES_PORT)
 
     if not os.path.exists(FIREBASE_KEY):
-        raise FileNotFoundError(
-            f"No existe el archivo Firebase: {FIREBASE_KEY}"
-        )
-
-    if not os.path.exists(ZKTIME_DB):
-        raise FileNotFoundError(
-            f"No existe la base de datos: {ZKTIME_DB}"
-        )
+        raise FileNotFoundError(f"No existe el archivo Firebase: {FIREBASE_KEY}")
 
     if not firebase_admin._apps:
         cred = credentials.Certificate(FIREBASE_KEY)
@@ -150,7 +161,14 @@ try:
 
     db = firestore.client()
 
-    conexion = sqlite3.connect(ZKTIME_DB)
+    conexion = psycopg2.connect(
+        host=POSTGRES_HOST,
+        port=POSTGRES_PORT,
+        database=POSTGRES_DB,
+        user=POSTGRES_USER,
+        password=POSTGRES_PASSWORD
+    )
+
     cursor = conexion.cursor()
 
     # =========================
@@ -160,19 +178,20 @@ try:
     cursor.execute("""
         SELECT
             e.id,
-            e.emp_pin,
-            e.emp_firstname,
-            e.emp_lastname,
-            e.emp_email,
-            e.emp_gender,
-            e.emp_phone,
-            e.emp_address,
-            e.emp_birthday,
+            e.emp_code,
+            e.first_name,
+            e.last_name,
+            e.email,
+            e.gender,
+            e.mobile,
+            e.address,
+            e.birthday,
             e.department_id,
             d.dept_name
-        FROM hr_employee e
-        LEFT JOIN hr_department d
+        FROM personnel_employee e
+        LEFT JOIN personnel_department d
             ON e.department_id = d.id
+        ORDER BY e.id ASC
     """)
 
     empleados = cursor.fetchall()
@@ -218,7 +237,7 @@ try:
             "grado": grado,
             "grupo": grupo,
             "estadoHuella": "registrada",
-            "origen": "ZKTime MB160",
+            "origen": "ZKBioTime MB160",
             "fechaSincronizacion": firestore.SERVER_TIMESTAMP
         }
 
@@ -233,26 +252,24 @@ try:
             datos_empleado["padreId"] = ""
             doc_ref.set(datos_empleado)
 
-        escribir_log(
-            f"Alumno sincronizado: {matricula} - {nombre_completo}"
-        )
+        escribir_log(f"Alumno sincronizado: {matricula} - {nombre_completo}")
 
     # =========================
-    # ASISTENCIAS DESDE ZKTIME DB
+    # ASISTENCIAS / MARCACIONES
     # =========================
 
     cursor.execute("""
         SELECT
-            a.id,
-            a.employee_id,
-            a.punch_time,
-            e.emp_pin,
-            e.emp_firstname,
-            e.emp_lastname
-        FROM att_punches a
-        JOIN hr_employee e
-            ON a.employee_id = e.id
-        ORDER BY a.id ASC
+            t.id,
+            t.emp_id,
+            t.punch_time,
+            e.emp_code,
+            e.first_name,
+            e.last_name
+        FROM iclock_transaction t
+        JOIN personnel_employee e
+            ON t.emp_id = e.id
+        ORDER BY t.id ASC
     """)
 
     registros = cursor.fetchall()
@@ -261,7 +278,7 @@ try:
 
     for r in registros:
         zk_id = limpiar(r[0])
-        fecha_hora = limpiar(r[2])
+        fecha_hora = formatear_fecha_hora(r[2])
         matricula = limpiar(r[3])
         nombre_asistencia = f"{limpiar(r[4])} {limpiar(r[5])}".strip()
 
@@ -273,7 +290,7 @@ try:
             "matricula": matricula,
             "fechaHora": fecha_hora,
             "nombre": nombre_asistencia,
-            "origen": "ZKTime MB160",
+            "origen": "ZKBioTime MB160",
             "fechaSincronizacion": firestore.SERVER_TIMESTAMP
         }, merge=True)
 
@@ -281,7 +298,7 @@ try:
             db,
             matricula,
             nombre_asistencia,
-            fecha_hora,
+            fecha_hora
         )
 
         escribir_log(
@@ -289,7 +306,7 @@ try:
         )
 
     mensaje = (
-        f"Sincronización exitosa. "
+        f"Sincronización exitosa ZKBioTime. "
         f"Empleados: {len(empleados)} | "
         f"Asistencias: {len(registros)}"
     )
