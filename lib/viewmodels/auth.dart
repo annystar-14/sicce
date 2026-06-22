@@ -3,6 +3,7 @@ import '../services/auth.dart';
 import '../services/database.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import '../services/notificacion_push.dart';
 
 class AuthViewModel extends ChangeNotifier {
   final AuthService _auth = AuthService();
@@ -22,6 +23,11 @@ class AuthViewModel extends ChangeNotifier {
 
       if (user != null) {
         await asegurarUsuarioFirestore();
+
+        await NotificacionPushService().inicializarNotificaciones(
+          usuarioId: user.uid,
+          tipoUsuario: "padre",
+        );
       }
 
       isLoading = false;
@@ -125,6 +131,11 @@ class AuthViewModel extends ChangeNotifier {
         .update({
       'padreId': user.uid,
     });
+
+    await NotificacionPushService().inicializarNotificaciones(
+      usuarioId: user.uid,
+      tipoUsuario: 'padre',
+    );
 
     isLoading = false;
     notifyListeners();

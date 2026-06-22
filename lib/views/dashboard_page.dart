@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../viewmodels/dashboard_padre.dart';
+import 'notificaciones_page.dart';
 
 class DashboardPage extends StatefulWidget {
   const DashboardPage({super.key});
@@ -26,6 +27,20 @@ class _DashboardPageState extends State<DashboardPage> {
     return Scaffold(
       appBar: AppBar(
         title: const Text("SICCE - Padre de Familia"),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.notifications),
+            tooltip: "Notificaciones",
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => const NotificacionesPage(),
+                ),
+              );
+            },
+          ),
+        ],
       ),
       body: vm.isLoading
           ? const Center(child: CircularProgressIndicator())
@@ -114,14 +129,19 @@ class _DashboardPageState extends State<DashboardPage> {
 
                         Card(
                           child: ListTile(
-                            leading: const Icon(Icons.history),
-                            title: const Text("Asistencias"),
+                            leading: const Icon(Icons.notifications_active),
+                            title: const Text("Notificaciones"),
                             subtitle: const Text(
-                              "Consulta los registros biométricos del alumno.",
+                              "Consulta las entradas y salidas registradas.",
                             ),
                             trailing: const Icon(Icons.arrow_forward_ios),
                             onTap: () {
-                              // Después aquí abrimos historial de asistencias del padre
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (_) => const NotificacionesPage(),
+                                ),
+                              );
                             },
                           ),
                         ),

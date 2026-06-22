@@ -6,6 +6,8 @@ import 'package:firebase_core/firebase_core.dart';
 import 'views/alumnos/alumno_login_page.dart';
 import 'viewmodels/dashboard_padre.dart';
 import 'viewmodels/dashboard_alumno.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
+import 'services/notificacion_push.dart';
 
 //PALETA DE COLORES DE TOMADO DE CANVA
 //https://www.canva.com/design/DAHByoEiWdQ/KIicJ_nqgwmEGCFJ0YqEdw/edit
@@ -14,9 +16,16 @@ const Color kColorAcentoRojo = Color(0xFFAE0E0F);
 const Color kColorTextoOscuro = Color(0xFF0D0E4A);
 const Color kColorFondoGrisClaro = Color(0xFFF2F2F3);
 
+Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+  await Firebase.initializeApp();
+}
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp();
+
+  FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
+  await NotificacionPushService.inicializarLocalNotifications();
 
   runApp(MyApp());
 }

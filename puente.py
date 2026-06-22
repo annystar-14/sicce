@@ -4,28 +4,19 @@ from datetime import datetime
 
 import psycopg2
 import firebase_admin
-from firebase_admin import credentials, firestore
+from firebase_admin import credentials, firestore, messaging
 
-
-# =========================
-# CONFIGURACIÓN
-# =========================
 
 FIREBASE_KEY = r"C:\Users\laraa\proyectsAS\app_sicce\sicce-2026-firebase-adminsdk-fbsvc-6b52c7221c.json"
 
-# ZKBioTime local
 POSTGRES_HOST = "127.0.0.1"
 POSTGRES_PORT = 7496
 POSTGRES_DB = "biotime"
 POSTGRES_USER = "postgres"
-POSTGRES_PASSWORD = ""  # CAMBIA ESTO
+POSTGRES_PASSWORD = ""
 
 LOG_FILE = "sync_zkbiotime.log"
 
-
-# =========================
-# FUNCIONES
-# =========================
 
 def escribir_log(mensaje):
     with open(LOG_FILE, "a", encoding="utf-8") as f:
@@ -41,10 +32,8 @@ def limpiar(valor):
 def formatear_fecha_hora(valor):
     if valor is None:
         return ""
-
     if isinstance(valor, datetime):
         return valor.strftime("%Y-%m-%d %H:%M:%S")
-
     return str(valor).strip()
 
 
@@ -61,7 +50,7 @@ def separar_grado_grupo(valor):
         if c.isdigit():
             grado += c
         else:
-            grupo += c
+            grupo += c.replace("-", "")
 
     return grado, grupo
 
@@ -75,6 +64,71 @@ def convertir_sexo(valor):
         return "F"
     else:
         return ""
+
+
+def enviar_notificacion_padre(db, matricula, nombre, fecha_hora, tipo):
+    try:
+        alumno_doc = db.collection("zktime_empleados").document(matricula).get()
+
+        if not alumno_doc.exists:
+            escribir_log(f"No existe alumno con matrícula {matricula}")
+            return
+
+        alumno = alumno_doc.to_dict()
+        padre_id = alumno.get("padreId", "")
+
+        if not padre_id:
+            escribir_log(f"Alumno {matricula} no tiene padreId")
+            return
+
+        padre_doc = db.collection("usuarios").document(padre_id).get()
+
+        if not padre_doc.exists:
+            escribir_log(f"No existe padre {padre_id}")
+            return
+
+        padre = padre_doc.to_dict()
+        token = padre.get("fcmToken", "")
+
+        if not token:
+            escribir_log(f"Padre {padre_id} no tiene fcmToken")
+            return
+
+        partes = fecha_hora.split(" ")
+        hora = partes[1] if len(partes) > 1 else ""
+
+        titulo = "📚 SICCE"
+
+        if tipo == "entrada":
+            cuerpo = f"Tu hijo {nombre} ingresó a la escuela a las {hora}."
+        else:
+            cuerpo = f"Tu hijo {nombre} salió de la escuela a las {hora}."
+
+        mensaje = messaging.Message(
+            notification=messaging.Notification(
+                title=titulo,
+                body=cuerpo,
+            ),
+            token=token,
+        )
+
+        messaging.send(mensaje)
+
+        db.collection("usuarios").document(padre_id).collection("notificaciones").add({
+            "titulo": titulo,
+            "mensaje": cuerpo,
+            "matricula": matricula,
+            "nombreAlumno": nombre,
+            "fechaHora": fecha_hora,
+            "tipo": tipo,
+            "leida": False,
+            "createdAt": firestore.SERVER_TIMESTAMP,
+        })
+
+        escribir_log(f"Notificación enviada: {padre_id} | {cuerpo}")
+
+    except Exception as e:
+        escribir_log(f"Error enviando notificación: {e}")
 
 
 def procesar_asistencia_diaria(db, matricula, nombre, fecha_hora):
@@ -115,32 +169,48 @@ def procesar_asistencia_diaria(db, matricula, nombre, fecha_hora):
                 "origen": "ZKBioTime MB160",
                 "fechaSincronizacion": firestore.SERVER_TIMESTAMP
             })
-        else:
-            data = doc.to_dict()
 
-            entrada_actual = data.get("entrada", "")
-            salida_actual = data.get("salida", "")
+            enviar_notificacion_padre(
+                db,
+                matricula,
+                nombre,
+                fecha_hora,
+                "entrada"
+            )
 
-            if entrada_actual == "":
+            escribir_log(f"Entrada registrada: {matricula} | {hora}")
+            return
+
+        data = doc.to_dict()
+
+        entrada_actual = data.get("entrada", "")
+        salida_actual = data.get("salida", "")
+
+        if entrada_actual != "" and salida_actual == "":
+            if hora != entrada_actual:
                 doc_ref.update({
-                    "entrada": hora,
-                    "estado": estado,
+                    "salida": hora,
                     "fechaSincronizacion": firestore.SERVER_TIMESTAMP
                 })
-            else:
-                if hora != entrada_actual and hora != salida_actual:
-                    doc_ref.update({
-                        "salida": hora,
-                        "fechaSincronizacion": firestore.SERVER_TIMESTAMP
-                    })
+
+                enviar_notificacion_padre(
+                    db,
+                    matricula,
+                    nombre,
+                    fecha_hora,
+                    "salida"
+                )
+
+                escribir_log(f"Salida registrada: {matricula} | {hora}")
+
+        else:
+            escribir_log(
+                f"Registro ignorado, ya tiene entrada y salida: {matricula} | {hora}"
+            )
 
     except Exception as e:
         escribir_log(f"Error procesando asistencia diaria: {e}")
 
-
-# =========================
-# PROCESO PRINCIPAL
-# =========================
 
 conexion = None
 
@@ -148,9 +218,6 @@ try:
     print("===================================")
     print("INICIANDO SINCRONIZACIÓN ZKBIOTIME")
     print("===================================")
-
-    print("Firebase:", FIREBASE_KEY)
-    print("ZKBioTime DB:", POSTGRES_HOST, POSTGRES_PORT)
 
     if not os.path.exists(FIREBASE_KEY):
         raise FileNotFoundError(f"No existe el archivo Firebase: {FIREBASE_KEY}")
@@ -170,10 +237,6 @@ try:
     )
 
     cursor = conexion.cursor()
-
-    # =========================
-    # EMPLEADOS / ALUMNOS
-    # =========================
 
     cursor.execute("""
         SELECT
@@ -195,7 +258,6 @@ try:
     """)
 
     empleados = cursor.fetchall()
-
     print(f"Empleados encontrados: {len(empleados)}")
 
     for e in empleados:
@@ -212,7 +274,6 @@ try:
         grado_grupo = limpiar(e[10])
 
         grado, grupo = separar_grado_grupo(grado_grupo)
-
         nombre_completo = f"{nombre} {apellidos}".strip()
 
         if not matricula:
@@ -243,20 +304,12 @@ try:
 
         if doc.exists:
             datos_actuales = doc.to_dict()
-
             if "padreId" not in datos_actuales:
                 datos_empleado["padreId"] = ""
-
             doc_ref.set(datos_empleado, merge=True)
         else:
             datos_empleado["padreId"] = ""
             doc_ref.set(datos_empleado)
-
-        escribir_log(f"Alumno sincronizado: {matricula} - {nombre_completo}")
-
-    # =========================
-    # ASISTENCIAS / MARCACIONES
-    # =========================
 
     cursor.execute("""
         SELECT
@@ -273,7 +326,6 @@ try:
     """)
 
     registros = cursor.fetchall()
-
     print(f"Asistencias encontradas: {len(registros)}")
 
     for r in registros:
@@ -285,12 +337,21 @@ try:
         if not zk_id or not matricula:
             continue
 
-        db.collection("asistencias").document(zk_id).set({
+        asistencia_ref = db.collection("asistencias").document(zk_id)
+        asistencia_doc = asistencia_ref.get()
+
+        if asistencia_doc.exists:
+            asistencia_data = asistencia_doc.to_dict()
+            if asistencia_data.get("procesada", False):
+                continue
+
+        asistencia_ref.set({
             "zk_id": zk_id,
             "matricula": matricula,
             "fechaHora": fecha_hora,
             "nombre": nombre_asistencia,
             "origen": "ZKBioTime MB160",
+            "procesada": True,
             "fechaSincronizacion": firestore.SERVER_TIMESTAMP
         }, merge=True)
 
@@ -301,9 +362,7 @@ try:
             fecha_hora
         )
 
-        escribir_log(
-            f"Asistencia sincronizada: {zk_id} | {matricula} | {fecha_hora}"
-        )
+        escribir_log(f"Asistencia procesada: {zk_id} | {matricula} | {fecha_hora}")
 
     mensaje = (
         f"Sincronización exitosa ZKBioTime. "
