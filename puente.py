@@ -187,7 +187,14 @@ def procesar_asistencia_diaria(db, matricula, nombre, fecha_hora):
         except:
             pass
 
-        fecha_hoy = datetime.now().strftime("%Y-%m-%d")
+        # Permite ±2 días de tolerancia por diferencias horarias o del reloj del biométrico
+        es_reciente = False
+        try:
+            fecha_dt = datetime.strptime(fecha, "%Y-%m-%d").date()
+            hoy_dt = datetime.now().date()
+            es_reciente = abs((hoy_dt - fecha_dt).days) <= 2
+        except Exception:
+            pass
 
         if not doc.exists:
             doc_ref.set({
@@ -200,8 +207,8 @@ def procesar_asistencia_diaria(db, matricula, nombre, fecha_hora):
                 "origen": "ZKBioTime MB160",
                 "fechaSincronizacion": firestore.SERVER_TIMESTAMP
             })
-            # Notificar al padre solo si es asistencia de HOY
-            if fecha == fecha_hoy:
+            # Notificar al padre solo si es asistencia reciente
+            if es_reciente:
                 enviar_notificacion_padre(db, matricula, nombre, fecha, hora, "entrada")
         else:
             data = doc.to_dict()
@@ -215,7 +222,7 @@ def procesar_asistencia_diaria(db, matricula, nombre, fecha_hora):
                     "estado": estado,
                     "fechaSincronizacion": firestore.SERVER_TIMESTAMP
                 })
-                if fecha == fecha_hoy:
+                if es_reciente:
                     enviar_notificacion_padre(db, matricula, nombre, fecha, hora, "entrada")
             else:
                 if hora != entrada_actual and hora != salida_actual:
@@ -223,7 +230,7 @@ def procesar_asistencia_diaria(db, matricula, nombre, fecha_hora):
                         "salida": hora,
                         "fechaSincronizacion": firestore.SERVER_TIMESTAMP
                     })
-                    if fecha == fecha_hoy:
+                    if es_reciente:
                         enviar_notificacion_padre(db, matricula, nombre, fecha, hora, "salida")
 
     except Exception as e:

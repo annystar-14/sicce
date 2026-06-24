@@ -7,6 +7,7 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'views/alumnos/alumno_login_page.dart';
 import 'viewmodels/dashboard_padre.dart';
 import 'viewmodels/dashboard_alumno.dart';
+import 'viewmodels/asistencia.dart';
 
 //PALETA DE COLORES DE TOMADO DE CANVA
 //https://www.canva.com/design/DAHByoEiWdQ/KIicJ_nqgwmEGCFJ0YqEdw/edit
@@ -53,6 +54,7 @@ class MyApp extends StatelessWidget {
       ChangeNotifierProvider(create: (_) => AuthViewModel()),
       ChangeNotifierProvider(create: (_) => DashboardPadreViewModel()),
       ChangeNotifierProvider(create: (_) => DashboardAlumnoViewModel()),
+      ChangeNotifierProvider(create: (_) => AsistenciaViewModel()),
     ],
       child: MaterialApp(
         debugShowCheckedModeBanner: false,

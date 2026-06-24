@@ -6,6 +6,8 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import '../../viewmodels/dashboard_padre.dart';
 import '../main.dart';
 import 'mensajes_tutor_page.dart';
+import 'historial_padre_page.dart';
+
 
 const Color kColorPrincipalAzul = Color(0xFF194395);
 const Color kColorAcentoRojo = Color(0xFFAE0E0F);
@@ -191,7 +193,14 @@ class _DashboardPageState extends State<DashboardPage> {
                             ),
                             trailing: const Icon(Icons.arrow_forward_ios),
                             onTap: () {
-                              // Después aquí abrimos historial de asistencias del padre
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (_) => HistorialPadrePage(
+                                    alumno: vm.alumno!,
+                                  ),
+                                ),
+                              );
                             },
                           ),
                         ),
