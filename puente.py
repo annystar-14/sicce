@@ -42,6 +42,52 @@ LOG_FILE = "sync_zkbiotime.log"
 # FUNCIONES
 # =========================
 
+STATE_FILE = r"D:\proyectohuellacobach\sicce\puente_state.txt"
+
+
+def obtener_ultimo_id():
+    if os.path.exists(STATE_FILE):
+        try:
+            with open(STATE_FILE, "r", encoding="utf-8") as f:
+                content = f.read().strip()
+                if content:
+                    return int(content)
+        except Exception as e:
+            escribir_log(f"Error al leer archivo de estado: {e}")
+    return None
+
+
+def guardar_ultimo_id(last_id):
+    try:
+        with open(STATE_FILE, "w", encoding="utf-8") as f:
+            f.write(str(last_id))
+    except Exception as e:
+        escribir_log(f"Error al guardar último ID en archivo de estado: {e}")
+
+
+def obtener_max_id_db():
+    conexion = None
+    try:
+        conexion = psycopg2.connect(
+            host=POSTGRES_HOST,
+            port=POSTGRES_PORT,
+            database=POSTGRES_DB,
+            user=POSTGRES_USER,
+            password=POSTGRES_PASSWORD
+        )
+        cursor = conexion.cursor()
+        cursor.execute("SELECT MAX(id) FROM iclock_transaction")
+        res = cursor.fetchone()
+        if res and res[0] is not None:
+            return int(res[0])
+    except Exception as e:
+        escribir_log(f"Error al obtener ID máximo de la base de datos: {e}")
+    finally:
+        if conexion:
+            conexion.close()
+    return 0
+
+
 def escribir_log(mensaje):
     with open(LOG_FILE, "a", encoding="utf-8") as f:
         f.write(f"[{datetime.now()}] {mensaje}\n")
@@ -245,6 +291,13 @@ def sincronizar_once(db):
     conexion = None
 
     try:
+        ultimo_id = obtener_ultimo_id()
+        if ultimo_id is None:
+            ultimo_id = obtener_max_id_db()
+            guardar_ultimo_id(ultimo_id)
+            print(f"Estado de sincronización inicializado en ID: {ultimo_id}")
+            escribir_log(f"Estado de sincronización inicializado en ID: {ultimo_id}")
+
         conexion = psycopg2.connect(
             host=POSTGRES_HOST,
             port=POSTGRES_PORT,
@@ -356,15 +409,24 @@ def sincronizar_once(db):
                 ON t.emp_id = e.id
             LEFT JOIN personnel_department d
                 ON e.department_id = d.id
+            WHERE t.id > %s
             ORDER BY t.id ASC
-        """)
+        """, (ultimo_id,))
 
         registros = cursor.fetchall()
 
         print(f"Asistencias encontradas: {len(registros)}")
 
+        max_id_procesado = ultimo_id
         for r in registros:
             zk_id = limpiar(r[0])
+            try:
+                zk_id_int = int(zk_id)
+                if zk_id_int > max_id_procesado:
+                    max_id_procesado = zk_id_int
+            except:
+                pass
+
             fecha_hora = formatear_fecha_hora(r[2])
             matricula = limpiar(r[3])
             nombre_asistencia = f"{limpiar(r[4])} {limpiar(r[5])}".strip()
@@ -416,6 +478,10 @@ def sincronizar_once(db):
             escribir_log(
                 f"Asistencia sincronizada: {zk_id} | {matricula} | {fecha_hora}"
             )
+
+        if max_id_procesado > ultimo_id:
+            guardar_ultimo_id(max_id_procesado)
+            escribir_log(f"Último ID sincronizado actualizado a: {max_id_procesado}")
 
         mensaje = (
             f"Sincronización exitosa ZKBioTime. "
