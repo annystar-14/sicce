@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import '../../viewmodels/dashboard_padre.dart';
 import '../main.dart';
 import 'mensajes_tutor_page.dart';
@@ -25,6 +26,32 @@ class _DashboardPageState extends State<DashboardPage> {
     Future.microtask(() {
       context.read<DashboardPadreViewModel>().cargarAlumno();
     });
+
+    // Guardar token FCM del dispositivo para recibir notificaciones
+    _registrarTokenFCM();
+
+    // Actualizar token si Firebase lo rota
+    FirebaseMessaging.instance.onTokenRefresh.listen(_guardarTokenEnFirestore);
+  }
+
+  Future<void> _registrarTokenFCM() async {
+    try {
+      final token = await FirebaseMessaging.instance.getToken();
+      if (token != null) {
+        await _guardarTokenEnFirestore(token);
+      }
+    } catch (e) {
+      // Silencioso — no crítico
+    }
+  }
+
+  Future<void> _guardarTokenEnFirestore(String token) async {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) return;
+    await FirebaseFirestore.instance.collection('usuarios').doc(uid).set(
+      {'fcmToken': token},
+      SetOptions(merge: true),
+    );
   }
 
   @override

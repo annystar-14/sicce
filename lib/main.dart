@@ -3,6 +3,7 @@ import 'viewmodels/auth.dart';
 import 'views/login_page.dart';
 import 'package:provider/provider.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'views/alumnos/alumno_login_page.dart';
 import 'viewmodels/dashboard_padre.dart';
 import 'viewmodels/dashboard_alumno.dart';
@@ -14,9 +15,33 @@ const Color kColorAcentoRojo = Color(0xFFAE0E0F);
 const Color kColorTextoOscuro = Color(0xFF0D0E4A);
 const Color kColorFondoGrisClaro = Color(0xFFF2F2F3);
 
+/// Handler para mensajes FCM recibidos en BACKGROUND/TERMINADO
+@pragma('vm:entry-point')
+Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+  await Firebase.initializeApp();
+  // El sistema Android muestra la notificación automáticamente
+}
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp();
+
+  // Registrar handler de mensajes en background
+  FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+
+  // Solicitar permisos de notificación (iOS + Android 13+)
+  await FirebaseMessaging.instance.requestPermission(
+    alert: true,
+    badge: true,
+    sound: true,
+  );
+
+  // Mostrar notificaciones en PRIMER PLANO (cuando la app está abierta)
+  await FirebaseMessaging.instance.setForegroundNotificationPresentationOptions(
+    alert: true,
+    badge: true,
+    sound: true,
+  );
 
   runApp(MyApp());
 }

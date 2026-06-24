@@ -7,7 +7,7 @@ from datetime import datetime
 
 import psycopg2
 import firebase_admin
-from firebase_admin import credentials, firestore
+from firebase_admin import credentials, firestore, messaging
 
 _lock_socket = None
 
@@ -92,6 +92,74 @@ def convertir_sexo(valor):
         return ""
 
 
+def enviar_notificacion_padre(db, matricula, nombre, fecha, hora, tipo_registro):
+    """
+    Busca el fcmToken del padre vinculado al alumno y le envía
+    una notificación push vía Firebase Cloud Messaging.
+    """
+    try:
+        # 1. Obtener padreId del alumno
+        alumno_doc = db.collection("zktime_empleados").document(matricula).get()
+        if not alumno_doc.exists:
+            return
+
+        padre_id = alumno_doc.to_dict().get("padreId", "")
+        if not padre_id:
+            return  # Alumno sin tutor vinculado
+
+        # 2. Obtener token FCM del padre
+        padre_doc = db.collection("usuarios").document(padre_id).get()
+        if not padre_doc.exists:
+            return
+
+        fcm_token = padre_doc.to_dict().get("fcmToken", "")
+        if not fcm_token:
+            return  # Padre sin token (nunca abrió la app)
+
+        # 3. Construir y enviar la notificación
+        nombre_corto = nombre.split()[0] if nombre else "Tu hijo/a"
+
+        try:
+            h, m, _ = hora.split(":")
+            h12 = int(h)
+            ampm = "AM" if h12 < 12 else "PM"
+            h12 = h12 if h12 <= 12 else h12 - 12
+            h12 = 12 if h12 == 0 else h12
+            hora_fmt = f"{h12}:{m} {ampm}"
+        except Exception:
+            hora_fmt = hora
+
+        tipo_texto = "entrada" if tipo_registro == "entrada" else "salida"
+        emoji = "🟢" if tipo_registro == "entrada" else "🔴"
+
+        mensaje = messaging.Message(
+            notification=messaging.Notification(
+                title=f"{emoji} Registro biométrico – {nombre}",
+                body=f"{nombre_corto} registró su {tipo_texto} a las {hora_fmt}",
+            ),
+            data={
+                "matricula": matricula,
+                "fecha": fecha,
+                "hora": hora,
+                "tipo": tipo_registro,
+            },
+            android=messaging.AndroidConfig(
+                priority="high",
+                notification=messaging.AndroidNotification(
+                    channel_id="asistencia_sicce",
+                    sound="default",
+                ),
+            ),
+            token=fcm_token,
+        )
+
+        messaging.send(mensaje)
+        escribir_log(f"Notificación enviada al padre de {matricula} ({tipo_texto} {hora_fmt})")
+
+    except Exception as e:
+        escribir_log(f"Error al enviar notificación FCM para {matricula}: {e}")
+
+
 def procesar_asistencia_diaria(db, matricula, nombre, fecha_hora):
     try:
         partes = fecha_hora.split(" ")
@@ -119,6 +187,8 @@ def procesar_asistencia_diaria(db, matricula, nombre, fecha_hora):
         except:
             pass
 
+        fecha_hoy = datetime.now().strftime("%Y-%m-%d")
+
         if not doc.exists:
             doc_ref.set({
                 "matricula": matricula,
@@ -130,6 +200,9 @@ def procesar_asistencia_diaria(db, matricula, nombre, fecha_hora):
                 "origen": "ZKBioTime MB160",
                 "fechaSincronizacion": firestore.SERVER_TIMESTAMP
             })
+            # Notificar al padre solo si es asistencia de HOY
+            if fecha == fecha_hoy:
+                enviar_notificacion_padre(db, matricula, nombre, fecha, hora, "entrada")
         else:
             data = doc.to_dict()
 
@@ -142,12 +215,16 @@ def procesar_asistencia_diaria(db, matricula, nombre, fecha_hora):
                     "estado": estado,
                     "fechaSincronizacion": firestore.SERVER_TIMESTAMP
                 })
+                if fecha == fecha_hoy:
+                    enviar_notificacion_padre(db, matricula, nombre, fecha, hora, "entrada")
             else:
                 if hora != entrada_actual and hora != salida_actual:
                     doc_ref.update({
                         "salida": hora,
                         "fechaSincronizacion": firestore.SERVER_TIMESTAMP
                     })
+                    if fecha == fecha_hoy:
+                        enviar_notificacion_padre(db, matricula, nombre, fecha, hora, "salida")
 
     except Exception as e:
         escribir_log(f"Error procesando asistencia diaria: {e}")
