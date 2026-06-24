@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import '../../viewmodels/dashboard_padre.dart';
+import '../main.dart';
 
 class DashboardPage extends StatefulWidget {
   const DashboardPage({super.key});
@@ -26,6 +28,41 @@ class _DashboardPageState extends State<DashboardPage> {
     return Scaffold(
       appBar: AppBar(
         title: const Text("SICCE - Padre de Familia"),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.logout),
+            tooltip: "Cerrar sesión",
+            onPressed: () async {
+              final confirm = await showDialog<bool>(
+                context: context,
+                builder: (context) => AlertDialog(
+                  title: const Text("Cerrar Sesión"),
+                  content: const Text("¿Estás seguro de que deseas salir?"),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(context, false),
+                      child: const Text("Cancelar"),
+                    ),
+                    TextButton(
+                      onPressed: () => Navigator.pop(context, true),
+                      child: const Text("Salir"),
+                    ),
+                  ],
+                ),
+              );
+
+              if (confirm == true) {
+                await FirebaseAuth.instance.signOut();
+                if (context.mounted) {
+                  Navigator.of(context).pushAndRemoveUntil(
+                    MaterialPageRoute(builder: (_) => const VistaPrincipal()),
+                    (route) => false,
+                  );
+                }
+              }
+            },
+          ),
+        ],
       ),
       body: vm.isLoading
           ? const Center(child: CircularProgressIndicator())

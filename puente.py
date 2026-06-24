@@ -11,7 +11,7 @@ from firebase_admin import credentials, firestore
 # CONFIGURACIÓN
 # =========================
 
-FIREBASE_KEY = r"C:\Users\laraa\proyectsAS\app_sicce\sicce-2026-firebase-adminsdk-fbsvc-6b52c7221c.json"
+FIREBASE_KEY = r"D:\proyectohuellacobach\sicce\sicce-2026-firebase-adminsdk-fbsvc-6b52c7221c.json"
 
 # ZKBioTime local
 POSTGRES_HOST = "127.0.0.1"
