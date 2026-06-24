@@ -228,7 +228,7 @@ def procesar_asistencia_diaria(db, matricula, nombre, fecha_hora):
             h = int(h)
             m = int(m)
 
-            if h > 7 or (h == 7 and m > 5):
+            if h > 7 or (h == 7 and m > 15):
                 estado = "Retardo"
         except:
             pass
