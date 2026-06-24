@@ -1,8 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../viewmodels/dashboard_padre.dart';
 import '../main.dart';
+import 'mensajes_tutor_page.dart';
+
+const Color kColorPrincipalAzul = Color(0xFF194395);
+const Color kColorAcentoRojo = Color(0xFFAE0E0F);
+const Color kColorTextoOscuro = Color(0xFF0D0E4A);
 
 class DashboardPage extends StatefulWidget {
   const DashboardPage({super.key});
@@ -161,6 +167,72 @@ class _DashboardPageState extends State<DashboardPage> {
                               // Después aquí abrimos historial de asistencias del padre
                             },
                           ),
+                        ),
+
+                        const SizedBox(height: 16),
+
+                        StreamBuilder<QuerySnapshot>(
+                          stream: FirebaseFirestore.instance
+                              .collection('mensajes_tutores')
+                              .where('idTutor', isEqualTo: FirebaseAuth.instance.currentUser?.uid)
+                              .where('leido', isEqualTo: false)
+                              .snapshots(),
+                          builder: (context, snapshot) {
+                            int unreadCount = 0;
+                            if (snapshot.hasData) {
+                              unreadCount = snapshot.data!.docs.length;
+                            }
+
+                            return Card(
+                              child: ListTile(
+                                leading: const CircleAvatar(
+                                  backgroundColor: kColorPrincipalAzul,
+                                  child: Icon(Icons.mail_outline, color: Colors.white),
+                                ),
+                                title: const Text(
+                                  "Mensajes de Dirección",
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    color: kColorTextoOscuro,
+                                  ),
+                                ),
+                                subtitle: const Text(
+                                  "Consulta los avisos enviados sobre tu hijo.",
+                                ),
+                                trailing: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    if (unreadCount > 0)
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                        decoration: BoxDecoration(
+                                          color: kColorAcentoRojo,
+                                          borderRadius: BorderRadius.circular(12),
+                                        ),
+                                        child: Text(
+                                          "$unreadCount",
+                                          style: const TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 12,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                      ),
+                                    const SizedBox(width: 4),
+                                    const Icon(Icons.arrow_forward_ios),
+                                  ],
+                                ),
+                                onTap: () {
+                                  Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (_) => const MensajesTutorPage(),
+                                    ),
+                                  );
+                                },
+                              ),
+                            );
+                          },
                         ),
                       ],
                     ),

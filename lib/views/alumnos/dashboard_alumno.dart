@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../../models/alumnos.dart';
 import '../../models/asistencia.dart';
@@ -283,6 +284,33 @@ Widget _buildInicio(DashboardAlumnoViewModel vm) {
                 ),
               ],
             ),
+          ),
+        ),
+
+        const SizedBox(height: 24),
+
+        Card(
+          elevation: 2,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: ListTile(
+            leading: const CircleAvatar(
+              backgroundColor: kColorAcentoRojo,
+              child: Icon(Icons.report_problem_outlined, color: Colors.white),
+            ),
+            title: const Text(
+              "Reportar Profesor Ausente",
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
+                color: kColorTextoOscuro,
+              ),
+            ),
+            subtitle: const Text(
+              "Informa a la dirección escolar si un docente no asistió a su clase.",
+            ),
+            trailing: const Icon(Icons.arrow_forward_ios),
+            onTap: () => _mostrarDialogoReportarProfesor(context),
           ),
         ),
       ],
@@ -938,6 +966,176 @@ Widget _buildCalendario(DashboardAlumnoViewModel vm) {
       leading: Icon(icon, color: kColorPrincipalAzul),
       title: Text(label),
       subtitle: Text(value),
+    );
+  }
+
+  void _mostrarDialogoReportarProfesor(BuildContext context) {
+    final nombreProfesorController = TextEditingController();
+    final materiaController = TextEditingController();
+    final motivoController = TextEditingController();
+    final formKey = GlobalKey<FormState>();
+    bool enviando = false;
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+              ),
+              title: const Row(
+                children: [
+                  Icon(Icons.report_problem_outlined, color: kColorAcentoRojo),
+                  SizedBox(width: 8),
+                  Text(
+                    "Reportar Profesor",
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      color: kColorPrincipalAzul,
+                    ),
+                  ),
+                ],
+              ),
+              content: Form(
+                key: formKey,
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Text(
+                        "Ingresa los datos del docente ausente para enviar un reporte a la dirección.",
+                        style: TextStyle(fontSize: 13, color: Colors.grey),
+                      ),
+                      const SizedBox(height: 16),
+                      TextFormField(
+                        controller: nombreProfesorController,
+                        decoration: const InputDecoration(
+                          labelText: "Nombre del Profesor",
+                          border: OutlineInputBorder(),
+                          prefixIcon: Icon(Icons.person),
+                        ),
+                        validator: (value) {
+                          if (value == null || value.trim().isEmpty) {
+                            return "Por favor ingresa el nombre";
+                          }
+                          return null;
+                        },
+                      ),
+                      const SizedBox(height: 12),
+                      TextFormField(
+                        controller: materiaController,
+                        decoration: const InputDecoration(
+                          labelText: "Materia",
+                          border: OutlineInputBorder(),
+                          prefixIcon: Icon(Icons.book_outlined),
+                        ),
+                        validator: (value) {
+                          if (value == null || value.trim().isEmpty) {
+                            return "Por favor ingresa la materia";
+                          }
+                          return null;
+                        },
+                      ),
+                      const SizedBox(height: 12),
+                      TextFormField(
+                        controller: motivoController,
+                        maxLines: 3,
+                        decoration: const InputDecoration(
+                          labelText: "Motivo / Comentarios",
+                          border: OutlineInputBorder(),
+                          prefixIcon: Icon(Icons.chat_bubble_outline),
+                          alignLabelWithHint: true,
+                        ),
+                        validator: (value) {
+                          if (value == null || value.trim().isEmpty) {
+                            return "Por favor describe la situación";
+                          }
+                          return null;
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: enviando ? null : () => Navigator.pop(dialogContext),
+                  child: const Text("Cancelar"),
+                ),
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: kColorPrincipalAzul,
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  ),
+                  onPressed: enviando
+                      ? null
+                      : () async {
+                          if (formKey.currentState!.validate()) {
+                            setDialogState(() {
+                              enviando = true;
+                            });
+
+                            try {
+                              // Guardar reporte en Firestore
+                              await FirebaseFirestore.instance.collection('alertas').add({
+                                'idAlumno': widget.alumno.matricula,
+                                'nombreAlumno': widget.alumno.nombreCompleto.isNotEmpty
+                                    ? widget.alumno.nombreCompleto
+                                    : "${widget.alumno.nombre} ${widget.alumno.apellidos}",
+                                'grado': widget.alumno.grado,
+                                'grupo': widget.alumno.grupo,
+                                'nombreProfesor': nombreProfesorController.text.trim(),
+                                'materia': materiaController.text.trim(),
+                                'motivo': motivoController.text.trim(),
+                                'fechaHora': FieldValue.serverTimestamp(),
+                                'estado': 'pendiente',
+                                'tipo': 'profesor_ausente',
+                              });
+
+                              if (dialogContext.mounted) {
+                                Navigator.pop(dialogContext);
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text("Reporte de profesor enviado con éxito."),
+                                    backgroundColor: Colors.green,
+                                  ),
+                                );
+                              }
+                            } catch (e) {
+                              setDialogState(() {
+                                enviando = false;
+                              });
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text("Error al enviar reporte: $e"),
+                                  backgroundColor: Colors.red,
+                                ),
+                              );
+                            }
+                          }
+                        },
+                  child: enviando
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(
+                            color: Colors.white,
+                            strokeWidth: 2,
+                          ),
+                        )
+                      : const Text(
+                          "Enviar",
+                          style: TextStyle(color: Colors.white),
+                        ),
+                ),
+              ],
+            );
+          },
+        );
+      },
     );
   }
 }

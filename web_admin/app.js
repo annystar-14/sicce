@@ -5,10 +5,13 @@
 // Variables de Estado Global
 let currentUser = null;
 let currentUserRole = null;
+let currentUserDisplayName = "";
 let currentTeacherUid = null; // Para gestionar asignaciones
 let activeClass = null; // Clase seleccionada por el maestro { gradoGrupo, materia }
 let allStudents = []; // Cache para el buscador individual
 let allGroups = []; // Cache de todos los grupos únicos
+let pendingAlerts = []; // Cache de alertas pendientes en memoria
+let alertsListenerUnsubscribe = null;
 
 // Inicialización
 document.addEventListener("DOMContentLoaded", () => {
@@ -86,6 +89,8 @@ function setupRoleUI(userData) {
   roleBadge.textContent = userData.rol === "admin" ? "Administrador" : "Profesor";
   roleBadge.className = `badge ${userData.rol === "admin" ? "badge-admin" : "badge-teacher"}`;
   
+  currentUserDisplayName = userData.nombre || userData.email || "Usuario";
+  
   // Resetear clases de navegación activas
   document.querySelectorAll(".nav-item").forEach(item => item.classList.remove("active"));
   
@@ -105,6 +110,7 @@ function setupRoleUI(userData) {
     loadAllSchedules();
     loadCalendarEvents();
     loadAdminStudentsList();
+    setupAlertsRealtimeListener();
   } else if (userData.rol === "maestro") {
     navAdminSection.classList.add("hidden");
     navTeacherSection.classList.remove("hidden");
@@ -235,6 +241,19 @@ function setupUIEventListeners() {
   // Formulario y Filtros Nuevos (Admin)
   document.getElementById("form-add-calendar-event").addEventListener("submit", handleSaveCalendarEvent);
   document.getElementById("students-search-filter").addEventListener("input", filterAdminStudentsList);
+  
+  // Event Listeners para Alertas (Teacher y Admin)
+  const formReport = document.getElementById("form-report-student");
+  if (formReport) formReport.addEventListener("submit", handleReportStudentSubmit);
+  
+  const formSendMsg = document.getElementById("form-send-tutor-message");
+  if (formSendMsg) formSendMsg.addEventListener("submit", handleSendTutorMessage);
+  
+  const btnResolveAlert = document.getElementById("btn-mark-alert-resolved");
+  if (btnResolveAlert) btnResolveAlert.addEventListener("click", handleMarkAlertAtendida);
+  
+  const alertFilter = document.getElementById("alert-type-filter");
+  if (alertFilter) alertFilter.addEventListener("change", (e) => renderAlertsTable(e.target.value));
 }
 
 function switchTab(tabId) {
@@ -246,6 +265,11 @@ function switchTab(tabId) {
   const activePane = document.getElementById(`tab-${tabId}`);
   if (activePane) {
     activePane.classList.remove("hidden");
+  }
+  
+  if (tabId === "admin-alerts") {
+    const filterType = document.getElementById("alert-type-filter").value;
+    renderAlertsTable(filterType);
   }
 }
 
@@ -261,6 +285,16 @@ function closeAllModals() {
   document.getElementById("form-add-assignment").reset();
   document.getElementById("register-teacher-error").classList.add("hidden");
   document.getElementById("register-admin-error").classList.add("hidden");
+  
+  const formReport = document.getElementById("form-report-student");
+  if (formReport) formReport.reset();
+  const formMsg = document.getElementById("form-send-tutor-message");
+  if (formMsg) formMsg.reset();
+  
+  const errReport = document.getElementById("report-student-error");
+  if (errReport) errReport.classList.add("hidden");
+  const errMsg = document.getElementById("send-message-error");
+  if (errMsg) errMsg.classList.add("hidden");
 }
 
 // ==========================================================================
@@ -876,6 +910,11 @@ async function loadClassStudentsForAttendance() {
             </label>
           </div>
         </td>
+        <td style="text-align: center;">
+          <button type="button" class="btn btn-warning-outline" onclick="openReportStudentModal('${matricula}', '${name.replace(/'/g, "\\'")}', '${student.grado || ""}', '${student.grupo || ""}')" title="Reportar alumno con faltas">
+            <i class="material-icons" style="font-size: 18px;">report_problem</i>
+          </button>
+        </td>
       `;
       tbody.appendChild(tr);
     });
@@ -1479,4 +1518,419 @@ function filterAdminStudentsList() {
   );
   
   renderAdminStudentsTable(filtered);
+}
+
+// ==========================================================================
+// 8. MÓDULO DE ALERTAS ESCOLARES
+// ==========================================================================
+
+// --- PROFESORES: Reportar Alumno ---
+function openReportStudentModal(matricula, nombreCompleto, grado, grupo) {
+  document.getElementById("report-student-matricula").value = matricula;
+  document.getElementById("report-student-name").value = nombreCompleto;
+  document.getElementById("report-student-grado").value = grado || "N/A";
+  document.getElementById("report-student-grupo").value = grupo || "N/A";
+  document.getElementById("report-student-group-display").value = `${grado || "N/A"}° "${grupo || "N/A"}"`;
+  
+  openModal("modal-report-student");
+}
+
+// Hacerlo accesible desde HTML onclick
+window.openReportStudentModal = openReportStudentModal;
+
+async function handleReportStudentSubmit(e) {
+  e.preventDefault();
+  
+  const matricula = document.getElementById("report-student-matricula").value;
+  const nombre = document.getElementById("report-student-name").value;
+  const grado = document.getElementById("report-student-grado").value;
+  const grupo = document.getElementById("report-student-grupo").value;
+  const motivo = document.getElementById("report-student-reason").value.trim();
+  const spinner = document.getElementById("report-student-spinner");
+  const errBox = document.getElementById("report-student-error");
+  
+  if (!motivo) return;
+  
+  errBox.classList.add("hidden");
+  spinner.classList.remove("hidden");
+  
+  try {
+    await db.collection("alertas").add({
+      idAlumno: matricula,
+      nombreAlumno: nombre,
+      grado: grado,
+      grupo: grupo,
+      idProfesor: currentUser ? currentUser.uid : "N/A",
+      nombreProfesor: currentUserDisplayName || "Profesor",
+      motivo: motivo,
+      fechaHora: firebase.firestore.FieldValue.serverTimestamp(),
+      estado: "pendiente",
+      tipo: "alumno_con_faltas"
+    });
+    
+    spinner.classList.add("hidden");
+    closeAllModals();
+    alert("Reporte de alumno enviado con éxito al administrador.");
+  } catch (error) {
+    console.error("Error al reportar alumno:", error);
+    spinner.classList.add("hidden");
+    errBox.textContent = "Error al enviar el reporte: " + error.message;
+    errBox.classList.remove("hidden");
+  }
+}
+
+// --- ADMINISTRADOR: Listeners en Tiempo Real y Carga ---
+function setupAlertsRealtimeListener() {
+  if (alertsListenerUnsubscribe) {
+    alertsListenerUnsubscribe();
+  }
+  
+  alertsListenerUnsubscribe = db.collection("alertas")
+    .where("estado", "==", "pendiente")
+    .onSnapshot((snapshot) => {
+      pendingAlerts = [];
+      snapshot.forEach((doc) => {
+        pendingAlerts.push({
+          id: doc.id,
+          ...doc.data()
+        });
+      });
+      
+      // Ordenar en memoria por fechaHora descendente para evitar requerir index compuesto
+      pendingAlerts.sort((a, b) => {
+        const tA = a.fechaHora ? (a.fechaHora.toMillis ? a.fechaHora.toMillis() : new Date(a.fechaHora).getTime()) : 0;
+        const tB = b.fechaHora ? (b.fechaHora.toMillis ? b.fechaHora.toMillis() : new Date(b.fechaHora).getTime()) : 0;
+        return tB - tA;
+      });
+      
+      // Actualizar contador del badge
+      const badge = document.getElementById("alerts-count-badge");
+      if (badge) {
+        if (pendingAlerts.length > 0) {
+          badge.textContent = pendingAlerts.length;
+          badge.classList.remove("hidden");
+        } else {
+          badge.classList.add("hidden");
+        }
+      }
+      
+      // Refrescar tabla si estamos en la pestaña activa
+      const activeTab = document.querySelector(".nav-item.active");
+      if (activeTab && activeTab.getAttribute("data-tab") === "admin-alerts") {
+        const filterType = document.getElementById("alert-type-filter").value;
+        renderAlertsTable(filterType);
+      }
+    }, (error) => {
+      console.error("Error en listener de alertas:", error);
+    });
+}
+
+function formatFirebaseDate(timestamp) {
+  if (!timestamp) return "Sin fecha";
+  const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
+  return date.toLocaleString('es-MX', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: true
+  });
+}
+
+function renderAlertsTable(filterType = "all") {
+  const tbody = document.getElementById("alerts-table-body");
+  if (!tbody) return;
+  
+  let filtered = pendingAlerts;
+  if (filterType !== "all") {
+    filtered = pendingAlerts.filter(a => a.tipo === filterType);
+  }
+  
+  if (filtered.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="6" class="text-center">No hay alertas pendientes en esta categoría.</td></tr>`;
+    return;
+  }
+  
+  tbody.innerHTML = "";
+  filtered.forEach((alert) => {
+    const tr = document.createElement("tr");
+    
+    const dateStr = formatFirebaseDate(alert.fechaHora);
+    const badgeClass = alert.tipo === "alumno_con_faltas" ? "badge-alumno-faltas" : "badge-profesor-ausente";
+    const badgeText = alert.tipo === "alumno_con_faltas" ? "Faltas Alumno" : "Profesor Ausente";
+    
+    let subjectText = "";
+    let reporterText = "";
+    
+    if (alert.tipo === "alumno_con_faltas") {
+      subjectText = `<strong>${alert.nombreAlumno}</strong> (${alert.idAlumno})<br><span style="font-size:0.8rem; color:#64748b;">Grupo: ${alert.grado}° "${alert.grupo}"</span>`;
+      reporterText = `${alert.nombreProfesor || "Profesor"}`;
+    } else {
+      subjectText = `Prof. <strong>${alert.nombreProfesor}</strong><br><span style="font-size:0.8rem; color:#64748b;">Materia: ${alert.materia || "N/A"}</span>`;
+      reporterText = `${alert.nombreAlumno} (${alert.idAlumno})`;
+    }
+    
+    tr.innerHTML = `
+      <td>${dateStr}</td>
+      <td><span class="badge-alert-type ${badgeClass}">${badgeText}</span></td>
+      <td>${subjectText}</td>
+      <td>${reporterText}</td>
+      <td><span class="badge badge-teacher" style="background-color: #fef3c7; color: #d97706; border: 1px solid #fde68a;">${alert.estado}</span></td>
+      <td style="text-align: center;">
+        <button class="btn btn-primary" onclick="openAlertDetailModal('${alert.id}')" style="padding: 6px 12px; font-size: 0.8rem;">
+          Gestionar
+        </button>
+      </td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+async function openAlertDetailModal(alertId) {
+  const alertItem = pendingAlerts.find(a => a.id === alertId);
+  if (!alertItem) return;
+  
+  const detailContent = document.getElementById("alert-detail-content");
+  const dateStr = formatFirebaseDate(alertItem.fechaHora);
+  
+  let subjectHtml = "";
+  let reporterHtml = "";
+  const badgeClass = alertItem.tipo === "alumno_con_faltas" ? "badge-alumno-faltas" : "badge-profesor-ausente";
+  const badgeText = alertItem.tipo === "alumno_con_faltas" ? "Alumno con Faltas" : "Profesor Ausente";
+  
+  if (alertItem.tipo === "alumno_con_faltas") {
+    subjectHtml = `
+      <div class="alert-detail-grid">
+        <div class="alert-detail-item">
+          <label>Alumno Reportado</label>
+          <span><strong>${alertItem.nombreAlumno}</strong> (Matrícula: ${alertItem.idAlumno})</span>
+        </div>
+        <div class="alert-detail-item">
+          <label>Grado y Grupo</label>
+          <span>${alertItem.grado}° "${alertItem.grupo}"</span>
+        </div>
+      </div>
+    `;
+    reporterHtml = `
+      <div class="alert-detail-item">
+        <label>Profesor que Reporta</label>
+        <span>${alertItem.nombreProfesor || "Profesor"} (ID: ${alertItem.idProfesor || "N/A"})</span>
+      </div>
+    `;
+  } else {
+    subjectHtml = `
+      <div class="alert-detail-grid">
+        <div class="alert-detail-item">
+          <label>Profesor Reportado</label>
+          <span><strong>${alertItem.nombreProfesor}</strong></span>
+        </div>
+        <div class="alert-detail-item">
+          <label>Materia</label>
+          <span>${alertItem.materia || "N/A"}</span>
+        </div>
+      </div>
+    `;
+    reporterHtml = `
+      <div class="alert-detail-item">
+        <label>Alumno que Reporta</label>
+        <span>${alertItem.nombreAlumno} (Matrícula: ${alertItem.idAlumno}, Grupo: ${alertItem.grado}° "${alertItem.grupo}")</span>
+      </div>
+    `;
+  }
+  
+  detailContent.innerHTML = `
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+      <span class="badge-alert-type ${badgeClass}">${badgeText}</span>
+      <span style="font-size: 0.85rem; color: #64748b;"><strong>Fecha del Reporte:</strong> ${dateStr}</span>
+    </div>
+    
+    <h4>Sujeto de la Alerta</h4>
+    ${subjectHtml}
+    
+    <h4 style="margin-top: 15px;">Origen del Reporte</h4>
+    <div class="alert-detail-grid">
+      ${reporterHtml}
+    </div>
+    
+    <h4 style="margin-top: 15px;">Motivo / Descripción</h4>
+    <div class="alert-detail-reason">
+      ${alertItem.motivo}
+    </div>
+  `;
+  
+  openModal("modal-alert-detail");
+  checkTutorLinkage(alertItem);
+}
+
+window.openAlertDetailModal = openAlertDetailModal;
+
+async function checkTutorLinkage(alertItem) {
+  const infoDiv = document.getElementById("alert-tutor-linking-info");
+  const messageSection = document.getElementById("alert-tutor-message-section");
+  const btnResolve = document.getElementById("btn-mark-alert-resolved");
+  
+  btnResolve.setAttribute("data-alert-id", alertItem.id);
+  
+  if (alertItem.tipo !== "alumno_con_faltas") {
+    infoDiv.innerHTML = `
+      <div class="tutor-link-status unlinked">
+        <i class="material-icons" style="font-size:18px;">info</i>
+        <span>No se requiere notificar al tutor para reportes de ausencia de docentes.</span>
+      </div>
+    `;
+    messageSection.classList.add("hidden");
+    return;
+  }
+  
+  infoDiv.innerHTML = `
+    <div style="display: flex; align-items: center; gap: 8px; color: var(--color-primary);">
+      <div class="spinner" style="border-top-color: var(--color-primary); width:16px; height:16px;"></div>
+      <span>Buscando vinculación de tutor en base de datos...</span>
+    </div>
+  `;
+  messageSection.classList.add("hidden");
+  
+  try {
+    const studentDoc = await db.collection("zktime_empleados").doc(alertItem.idAlumno).get();
+    
+    if (!studentDoc.exists) {
+      infoDiv.innerHTML = `
+        <div class="tutor-link-status unlinked">
+          <i class="material-icons" style="font-size:18px; color: var(--color-danger);">warning</i>
+          <span>El alumno no existe en el catálogo biométrico del plantel.</span>
+        </div>
+      `;
+      return;
+    }
+    
+    const studentData = studentDoc.data();
+    const padreId = studentData.padreId;
+    
+    if (!padreId) {
+      infoDiv.innerHTML = `
+        <div class="tutor-link-status unlinked">
+          <i class="material-icons" style="font-size:18px; color: #64748b;">warning</i>
+          <span>Este alumno no cuenta con un tutor/padre de familia vinculado en la app móvil.</span>
+        </div>
+      `;
+      return;
+    }
+    
+    const tutorDoc = await db.collection("usuarios").doc(padreId).get();
+    
+    if (!tutorDoc.exists) {
+      infoDiv.innerHTML = `
+        <div class="tutor-link-status unlinked">
+          <i class="material-icons" style="font-size:18px; color: var(--color-warning);">warning</i>
+          <span>Tutor vinculado con UID: <code>${padreId}</code>, pero el perfil del usuario no existe.</span>
+        </div>
+      `;
+      return;
+    }
+    
+    const tutorData = tutorDoc.data();
+    const tutorName = tutorData.nombre || "Tutor sin Nombre";
+    const tutorEmail = tutorData.email || "Sin Correo";
+    
+    infoDiv.innerHTML = `
+      <div class="tutor-link-status linked">
+        <i class="material-icons" style="font-size:20px; color: var(--color-success);">check_circle</i>
+        <span><strong>Tutor Vinculado:</strong> ${tutorName} (${tutorEmail})</span>
+      </div>
+    `;
+    
+    // Rellenar formulario de mensaje al tutor
+    document.getElementById("message-tutor-id").value = padreId;
+    document.getElementById("message-tutor-name").value = tutorName;
+    document.getElementById("message-student-id").value = alertItem.idAlumno;
+    document.getElementById("message-student-name").value = alertItem.nombreAlumno;
+    document.getElementById("message-alert-id").value = alertItem.id;
+    
+    document.getElementById("message-tutor-text").value = `Estimado(a) tutor(a) ${tutorName}, se le notifica que su hijo(a) ${alertItem.nombreAlumno} del grupo ${alertItem.grado}° "${alertItem.grupo}" ha registrado inasistencias a clases reportadas por su docente. Motivo reportado: "${alertItem.motivo}". Agradecemos su atención para revisar esta situación con el alumno.`;
+    
+    messageSection.classList.remove("hidden");
+  } catch (error) {
+    console.error("Error al buscar tutor:", error);
+    infoDiv.innerHTML = `
+      <div class="tutor-link-status unlinked">
+        <i class="material-icons" style="font-size:18px; color: var(--color-danger);">error</i>
+        <span>Error de conexión al verificar el estado de vinculación del tutor.</span>
+      </div>
+    `;
+  }
+}
+
+async function handleSendTutorMessage(e) {
+  e.preventDefault();
+  
+  const alertId = document.getElementById("message-alert-id").value;
+  const idTutor = document.getElementById("message-tutor-id").value;
+  const nombreTutor = document.getElementById("message-tutor-name").value;
+  const idAlumno = document.getElementById("message-student-id").value;
+  const nombreAlumno = document.getElementById("message-student-name").value;
+  const mensajeText = document.getElementById("message-tutor-text").value.trim();
+  
+  const spinner = document.getElementById("send-message-spinner");
+  const errBox = document.getElementById("send-message-error");
+  
+  if (!mensajeText) return;
+  
+  errBox.classList.add("hidden");
+  spinner.classList.remove("hidden");
+  
+  try {
+    const batch = db.batch();
+    
+    // 1. Guardar en mensajes_tutores
+    const msgRef = db.collection("mensajes_tutores").doc();
+    batch.set(msgRef, {
+      idTutor: idTutor,
+      nombreTutor: nombreTutor,
+      idAlumno: idAlumno,
+      nombreAlumno: nombreAlumno,
+      mensaje: mensajeText,
+      fechaHora: firebase.firestore.FieldValue.serverTimestamp(),
+      enviadoPor: "admin",
+      leido: false
+    });
+    
+    // 2. Marcar alerta como atendida
+    const alertRef = db.collection("alertas").doc(alertId);
+    batch.update(alertRef, {
+      estado: "atendida"
+    });
+    
+    await batch.commit();
+    
+    spinner.classList.add("hidden");
+    closeAllModals();
+    alert("Mensaje enviado con éxito al tutor. La alerta ha sido marcada como atendida.");
+  } catch (error) {
+    console.error("Error al enviar mensaje al tutor:", error);
+    spinner.classList.add("hidden");
+    errBox.textContent = "Error al enviar: " + error.message;
+    errBox.classList.remove("hidden");
+  }
+}
+
+async function handleMarkAlertAtendida() {
+  const alertId = this.getAttribute("data-alert-id");
+  if (!alertId) return;
+  
+  if (!confirm("¿Estás seguro de marcar esta alerta como atendida sin enviar mensaje al tutor?")) {
+    return;
+  }
+  
+  try {
+    await db.collection("alertas").doc(alertId).update({
+      estado: "atendida"
+    });
+    
+    closeAllModals();
+    alert("La alerta ha sido marcada como atendida.");
+  } catch (error) {
+    console.error("Error al resolver alerta:", error);
+    alert("Error al actualizar el estado de la alerta: " + error.message);
+  }
 }

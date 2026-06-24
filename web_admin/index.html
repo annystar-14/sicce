@@ -111,6 +111,11 @@
             <i class="material-icons">people</i>
             <span>Alumnos</span>
           </a>
+          <a href="#" class="nav-item" data-tab="admin-alerts">
+            <i class="material-icons">notifications_active</i>
+            <span>Alertas Escolares</span>
+            <span id="alerts-count-badge" class="badge badge-alert-count hidden">0</span>
+          </a>
           <a href="#" class="nav-item" data-tab="admin-admins">
             <i class="material-icons">security</i>
             <span>Administradores</span>
@@ -425,6 +430,46 @@
         </div>
       </section>
 
+      <!-- ==================== TAB: ALERTAS ESCOLARES (ADMIN) ==================== -->
+      <section id="tab-admin-alerts" class="tab-pane hidden">
+        <div class="content-header">
+          <div>
+            <h1>Alertas Escolares</h1>
+            <p>Supervisa los reportes de alumnos con faltas y de profesores ausentes en tiempo real.</p>
+          </div>
+          <div class="filter-controls" style="display: flex; gap: 10px; align-items: center;">
+            <label for="alert-type-filter" style="font-weight: 500; color: var(--text-dark);">Filtrar:</label>
+            <select id="alert-type-filter" class="form-control" style="width: auto; padding: 8px 12px;">
+              <option value="all">Todas las pendientes</option>
+              <option value="alumno_con_faltas">Alumnos con Faltas</option>
+              <option value="profesor_ausente">Profesores Ausentes</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="table-responsive">
+            <table class="table">
+              <thead>
+                <tr>
+                  <th>Fecha</th>
+                  <th>Tipo de Alerta</th>
+                  <th>Detalle / Sujeto</th>
+                  <th>Reportado Por</th>
+                  <th>Estado</th>
+                  <th class="actions-col">Acción</th>
+                </tr>
+              </thead>
+              <tbody id="alerts-table-body">
+                <tr>
+                  <td colspan="6" class="text-center">Cargando alertas...</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
       <!-- ==================== TAB: MIS SALONES (TEACHER) ==================== -->
       <section id="tab-teacher-dashboard" class="tab-pane hidden">
         <div class="content-header">
@@ -476,6 +521,7 @@
                   <th>Matrícula</th>
                   <th>Alumno</th>
                   <th class="status-selection-header">Estado de Asistencia</th>
+                  <th style="width: 100px; text-align: center;">Reportar</th>
                 </tr>
               </thead>
               <tbody id="attendance-students-body">
@@ -730,6 +776,96 @@
               </tbody>
             </table>
           </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: REPORTAR ALUMNO (MAESTRO) -->
+  <div id="modal-report-student" class="modal-overlay hidden">
+    <div class="modal">
+      <div class="modal-header">
+        <h3>Reportar Alumno con Faltas</h3>
+        <button class="btn-close-modal"><i class="material-icons">close</i></button>
+      </div>
+      <div class="modal-body">
+        <form id="form-report-student">
+          <!-- Datos ocultos/lectura para la alerta -->
+          <input type="hidden" id="report-student-matricula">
+          <input type="hidden" id="report-student-grado">
+          <input type="hidden" id="report-student-grupo">
+          
+          <div class="input-group">
+            <label>Alumno</label>
+            <input type="text" id="report-student-name" readonly disabled class="form-control-readonly">
+          </div>
+          <div class="input-group">
+            <label>Grupo</label>
+            <input type="text" id="report-student-group-display" readonly disabled class="form-control-readonly">
+          </div>
+          <div class="input-group">
+            <label for="report-student-reason">Motivo del Reporte</label>
+            <textarea id="report-student-reason" required rows="4" placeholder="Escribe el motivo detallado de las faltas o conductas del alumno..."></textarea>
+          </div>
+          <div class="modal-actions">
+            <button type="button" class="btn btn-secondary btn-close-modal">Cancelar</button>
+            <button type="submit" class="btn btn-primary">
+              <span>Enviar Reporte</span>
+              <div class="spinner hidden" id="report-student-spinner"></div>
+            </button>
+          </div>
+          <div id="report-student-error" class="error-message hidden"></div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: DETALLE DE ALERTA Y AVISO AL TUTOR (ADMIN) -->
+  <div id="modal-alert-detail" class="modal-overlay hidden">
+    <div class="modal modal-lg">
+      <div class="modal-header">
+        <h3>Detalle de Alerta Escolar</h3>
+        <button class="btn-close-modal"><i class="material-icons">close</i></button>
+      </div>
+      <div class="modal-body">
+        <div id="alert-detail-content" class="alert-detail-content">
+          <!-- Dinámico -->
+        </div>
+        
+        <div id="alert-tutor-linking-info" class="alert-tutor-linking-info card" style="margin-top: 15px; padding: 15px;">
+          <!-- Información del tutor dinámico -->
+        </div>
+
+        <div id="alert-tutor-message-section" class="alert-tutor-message-section card hidden" style="margin-top: 15px; padding: 15px;">
+          <h4>Enviar Mensaje Directo al Tutor</h4>
+          <form id="form-send-tutor-message">
+            <input type="hidden" id="message-tutor-id">
+            <input type="hidden" id="message-tutor-name">
+            <input type="hidden" id="message-student-id">
+            <input type="hidden" id="message-student-name">
+            <input type="hidden" id="message-alert-id">
+            
+            <div class="input-group">
+              <label for="message-tutor-text">Mensaje a Enviar</label>
+              <textarea id="message-tutor-text" required rows="4" placeholder="Estimado tutor, se le notifica que su hijo ha presentado faltas recurrentes..."></textarea>
+            </div>
+            <div class="modal-actions" style="margin-top: 15px; justify-content: flex-end;">
+              <button type="submit" class="btn btn-primary">
+                <i class="material-icons">send</i>
+                <span>Enviar Notificación al Tutor</span>
+                <div class="spinner hidden" id="send-message-spinner"></div>
+              </button>
+            </div>
+            <div id="send-message-error" class="error-message hidden"></div>
+          </form>
+        </div>
+
+        <div class="modal-actions" style="margin-top: 20px; border-top: 1px solid var(--border-color); padding-top: 15px; justify-content: space-between;">
+          <button type="button" class="btn btn-secondary btn-close-modal">Cerrar</button>
+          <button type="button" id="btn-mark-alert-resolved" class="btn btn-success">
+            <i class="material-icons">check_circle</i>
+            <span>Marcar como Atendida</span>
+          </button>
         </div>
       </div>
     </div>
