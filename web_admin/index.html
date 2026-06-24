@@ -1,0 +1,739 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SICCE COBACH - Portal de Administración</title>
+  <!-- Google Fonts Poppins & Material Icons -->
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+  <!-- CSS Stylesheet -->
+  <link rel="stylesheet" href="style.css">
+  
+  <!-- Firebase SDK v8 (Compat) -->
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
+  
+  <!-- Firebase Config -->
+  <script src="firebase-config.js" defer></script>
+  <!-- Application Logic -->
+  <script src="app.js" defer></script>
+</head>
+<body>
+
+  <!-- ======================================================== -->
+  <!-- VISTA DE LOGIN                                           -->
+  <!-- ======================================================== -->
+  <div id="login-container" class="login-container">
+    <div class="login-card">
+      <div class="login-header">
+        <i class="material-icons brand-icon">school</i>
+        <h1>SICCE COBACH</h1>
+        <p>Portal de Administración y Profesores</p>
+      </div>
+      
+      <form id="login-form">
+        <div class="input-group">
+          <label for="login-email">Correo Electrónico</label>
+          <div class="input-wrapper">
+            <i class="material-icons">email</i>
+            <input type="email" id="login-email" required placeholder="ejemplo@cobach.edu.mx">
+          </div>
+        </div>
+        
+        <div class="input-group">
+          <label for="login-password">Contraseña</label>
+          <div class="input-wrapper">
+            <i class="material-icons">lock</i>
+            <input type="password" id="login-password" required placeholder="••••••••">
+          </div>
+        </div>
+        
+        <button type="submit" id="btn-login" class="btn btn-primary btn-block">
+          <span>Iniciar sesión</span>
+          <div class="spinner hidden" id="login-spinner"></div>
+        </button>
+        
+        <div id="login-error" class="error-message hidden"></div>
+      </form>
+      
+      <div class="login-footer">
+        <p>DEP. TECNOLOGÍAS EDUCATIVAS Y PROCESOS DIGITALES</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ======================================================== -->
+  <!-- CONTENEDOR DE LA APLICACIÓN PRINCIPAL (DASHBOARD)        -->
+  <!-- ======================================================== -->
+  <div id="app-container" class="app-container hidden">
+    <!-- BARRA LATERAL (SIDEBAR) -->
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <i class="material-icons">school</i>
+        <div class="brand-info">
+          <h2>SICCE COBACH</h2>
+          <span>Web Portal</span>
+        </div>
+      </div>
+      
+      <div class="user-profile-summary">
+        <div class="avatar">
+          <i class="material-icons">person</i>
+        </div>
+        <div class="user-info">
+          <h4 id="user-display-name">Cargando...</h4>
+          <span id="user-display-role" class="badge">Rol</span>
+        </div>
+      </div>
+      
+      <nav class="sidebar-nav">
+        <!-- Opciones del Administrador -->
+        <div id="nav-admin-section" class="nav-section hidden">
+          <a href="#" class="nav-item active" data-tab="admin-teachers">
+            <i class="material-icons">assignment_ind</i>
+            <span>Profesores</span>
+          </a>
+          <a href="#" class="nav-item" data-tab="admin-schedules">
+            <i class="material-icons">calendar_today</i>
+            <span>Horarios y Salones</span>
+          </a>
+          <a href="#" class="nav-item" data-tab="admin-calendar">
+            <i class="material-icons">edit_calendar</i>
+            <span>Calendario Escolar</span>
+          </a>
+          <a href="#" class="nav-item" data-tab="admin-reports">
+            <i class="material-icons">description</i>
+            <span>Reportes Grupales</span>
+          </a>
+          <a href="#" class="nav-item" data-tab="admin-students">
+            <i class="material-icons">people</i>
+            <span>Alumnos</span>
+          </a>
+          <a href="#" class="nav-item" data-tab="admin-admins">
+            <i class="material-icons">security</i>
+            <span>Administradores</span>
+          </a>
+        </div>
+        
+        <!-- Opciones Compartidas / Profesores -->
+        <div id="nav-teacher-section" class="nav-section hidden">
+          <a href="#" class="nav-item active" data-tab="teacher-dashboard">
+            <i class="material-icons">dashboard</i>
+            <span>Mis Salones</span>
+          </a>
+        </div>
+
+        <!-- Opción de reporte de alumno específico para ambos -->
+        <div class="nav-section">
+          <a href="#" class="nav-item" data-tab="student-search">
+            <i class="material-icons">person_search</i>
+            <span>Reporte Individual</span>
+          </a>
+        </div>
+      </nav>
+      
+      <div class="sidebar-footer">
+        <button id="btn-logout" class="btn btn-danger btn-block btn-logout">
+          <i class="material-icons">logout</i>
+          <span>Cerrar Sesión</span>
+        </button>
+      </div>
+    </aside>
+
+    <!-- ÁREA DE CONTENIDO PRINCIPAL -->
+    <main class="main-content">
+      
+      <!-- ==================== TAB: PROFESORES (ADMIN) ==================== -->
+      <section id="tab-admin-teachers" class="tab-pane active hidden">
+        <div class="content-header">
+          <div>
+            <h1>Gestión de Profesores</h1>
+            <p>Registra nuevos profesores y gestiona sus salones y materias asignadas.</p>
+          </div>
+          <button id="btn-open-register-teacher" class="btn btn-primary">
+            <i class="material-icons">add</i>
+            <span>Nuevo Profesor</span>
+          </button>
+        </div>
+        
+        <div class="card">
+          <div class="table-responsive">
+            <table class="table">
+              <thead>
+                <tr>
+                  <th>Nombre</th>
+                  <th>Correo</th>
+                  <th>Salones y Materias Asignadas</th>
+                  <th class="actions-col">Acciones</th>
+                </tr>
+              </thead>
+              <tbody id="teachers-table-body">
+                <tr>
+                  <td colspan="4" class="text-center">Cargando profesores...</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- ==================== TAB: HORARIOS Y SALONES (ADMIN) ==================== -->
+      <section id="tab-admin-schedules" class="tab-pane hidden">
+        <div class="content-header">
+          <div>
+            <h1>Schedules & Classrooms</h1>
+            <p>Visualiza todas las materias y grupos que imparte cada profesor.</p>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="table-responsive">
+            <table class="table">
+              <thead>
+                <tr>
+                  <th>Profesor</th>
+                  <th>Grupo/Salón</th>
+                  <th>Materia</th>
+                </tr>
+              </thead>
+              <tbody id="schedules-table-body">
+                <tr>
+                  <td colspan="3" class="text-center">No hay asignaciones registradas</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- ==================== TAB: REPORTES GRUPALES (ADMIN) ==================== -->
+      <section id="tab-admin-reports" class="tab-pane hidden">
+        <div class="content-header">
+          <div>
+            <h1>Reportes de Asistencia por Grupo</h1>
+            <p>Genera y exporta reportes detallados de asistencia por salón y rango de fechas.</p>
+          </div>
+        </div>
+
+        <div class="card filter-card">
+          <div class="filter-row">
+            <div class="input-group">
+              <label for="report-group">Grupo/Salón</label>
+              <select id="report-group">
+                <option value="">Seleccione un grupo</option>
+              </select>
+            </div>
+            <div class="input-group">
+              <label for="report-start-date">Fecha Inicio</label>
+              <input type="date" id="report-start-date">
+            </div>
+            <div class="input-group">
+              <label for="report-end-date">Fecha Fin</label>
+              <input type="date" id="report-end-date">
+            </div>
+            <div class="filter-actions">
+              <button id="btn-generate-group-report" class="btn btn-primary">
+                <i class="material-icons">search</i>
+                <span>Generar</span>
+              </button>
+              <button id="btn-print-group-report" class="btn btn-secondary" disabled>
+                <i class="material-icons">print</i>
+                <span>Imprimir</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div id="group-report-result" class="hidden">
+          <!-- Report Header to print -->
+          <div class="report-print-header">
+            <h2>COLEGIO DE BACHILLERES</h2>
+            <h3>Reporte Grupal de Asistencias - SICCE</h3>
+            <p id="report-meta-text">Grupo: 3A | Periodo: 2026-06-01 al 2026-06-30</p>
+          </div>
+
+          <div class="report-stats">
+            <div class="stat-box count-asistencia">
+              <span class="stat-number" id="group-stat-asistencias">0</span>
+              <span class="stat-label">Asistencias</span>
+            </div>
+            <div class="stat-box count-retardo">
+              <span class="stat-number" id="group-stat-retardos">0</span>
+              <span class="stat-label">Retardos</span>
+            </div>
+            <div class="stat-box count-falta">
+              <span class="stat-number" id="group-stat-faltas">0</span>
+              <span class="stat-label">Faltas</span>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="table-responsive">
+              <table class="table report-table">
+                <thead>
+                  <tr>
+                    <th>Matrícula</th>
+                    <th>Alumno</th>
+                    <th>Asistencias</th>
+                    <th>Retardos</th>
+                    <th>Faltas</th>
+                    <th>% Asistencia</th>
+                  </tr>
+                </thead>
+                <tbody id="group-report-table-body">
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ==================== TAB: ADMINISTRADORES (ADMIN) ==================== -->
+      <section id="tab-admin-admins" class="tab-pane hidden">
+        <div class="content-header">
+          <div>
+            <h1>Administradores del Sistema</h1>
+            <p>Registra nuevos administradores con acceso completo al portal web.</p>
+          </div>
+          <button id="btn-open-register-admin" class="btn btn-primary">
+            <i class="material-icons">add</i>
+            <span>Nuevo Administrador</span>
+          </button>
+        </div>
+
+        <div class="card">
+          <div class="table-responsive">
+            <table class="table">
+              <thead>
+                <tr>
+                  <th>Nombre</th>
+                  <th>Correo</th>
+                  <th>Fecha de Creación</th>
+                </tr>
+              </thead>
+              <tbody id="admins-table-body">
+                <tr>
+                  <td colspan="3" class="text-center">Cargando administradores...</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- ==================== TAB: CALENDARIO ESCOLAR (ADMIN) ==================== -->
+      <section id="tab-admin-calendar" class="tab-pane hidden">
+        <div class="content-header">
+          <div>
+            <h1>Calendario Escolar</h1>
+            <p>Agrega suspensiones de clases, puentes y días festivos para que se muestren en la app de alumnos.</p>
+          </div>
+        </div>
+
+        <div class="card filter-card">
+          <h4>Registrar Evento Escolar</h4>
+          <form id="form-add-calendar-event" class="filter-row" style="align-items: flex-end;">
+            <div class="input-group">
+              <label for="calendar-event-date">Fecha</label>
+              <input type="date" id="calendar-event-date" required>
+            </div>
+            <div class="input-group">
+              <label for="calendar-event-type">Tipo de Evento</label>
+              <select id="calendar-event-type" required>
+                <option value="suspension">Suspensión de clases</option>
+                <option value="puente">Puente / Fin de semana largo</option>
+                <option value="festivo">Día festivo / Celebración</option>
+              </select>
+            </div>
+            <div class="input-group" style="flex: 2;">
+              <label for="calendar-event-desc">Descripción / Motivo</label>
+              <input type="text" id="calendar-event-desc" required placeholder="Ej. Consejo Técnico Escolar, Día de la Independencia">
+            </div>
+            <button type="submit" class="btn btn-primary">
+              <i class="material-icons">save</i>
+              <span>Guardar</span>
+            </button>
+          </form>
+        </div>
+
+        <div class="card">
+          <h3>Eventos Registrados</h3>
+          <div class="table-responsive" style="margin-top: 1rem;">
+            <table class="table">
+              <thead>
+                <tr>
+                  <th>Fecha</th>
+                  <th>Tipo</th>
+                  <th>Descripción</th>
+                  <th class="actions-col">Acción</th>
+                </tr>
+              </thead>
+              <tbody id="calendar-events-table-body">
+                <tr>
+                  <td colspan="4" class="text-center">No hay eventos escolares registrados.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- ==================== TAB: ALUMNOS (ADMIN) ==================== -->
+      <section id="tab-admin-students" class="tab-pane hidden">
+        <div class="content-header">
+          <div>
+            <h1>Directorio de Alumnos</h1>
+            <p>Consulta el catálogo de alumnos sincronizados con sus datos de contacto y estado de huella.</p>
+          </div>
+        </div>
+
+        <div class="card filter-card">
+          <div class="filter-row">
+            <div class="input-group" style="flex: 2;">
+              <label for="students-search-filter">Buscar Alumno</label>
+              <div class="input-wrapper">
+                <i class="material-icons">search</i>
+                <input type="text" id="students-search-filter" placeholder="Buscar por matrícula, nombre, grado o grupo...">
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="table-responsive">
+            <table class="table">
+              <thead>
+                <tr>
+                  <th>Matrícula</th>
+                  <th>Nombre Completo</th>
+                  <th>Grado/Grupo</th>
+                  <th>Contacto</th>
+                  <th>Dirección</th>
+                  <th>Biométrico</th>
+                  <th>Tutor Vinculado</th>
+                </tr>
+              </thead>
+              <tbody id="admin-students-table-body">
+                <tr>
+                  <td colspan="7" class="text-center">Cargando alumnos...</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- ==================== TAB: MIS SALONES (TEACHER) ==================== -->
+      <section id="tab-teacher-dashboard" class="tab-pane hidden">
+        <div class="content-header">
+          <div>
+            <h1 id="teacher-dashboard-title">Mis Salones y Materias</h1>
+            <p>Selecciona un salón para tomar asistencia o consultar los registros.</p>
+          </div>
+        </div>
+
+        <div id="teacher-classes-grid" class="classes-grid">
+          <!-- Dinámico -->
+          <div class="text-center grid-full">Cargando tus salones asignados...</div>
+        </div>
+      </section>
+
+      <!-- ==================== VIEW: TOMA DE ASISTENCIA (TEACHER) ==================== -->
+      <div id="view-take-attendance" class="attendance-view hidden">
+        <div class="content-header">
+          <button id="btn-back-to-classes" class="btn btn-text">
+            <i class="material-icons">arrow_back</i>
+            <span>Volver a Salones</span>
+          </button>
+          <div>
+            <h1 id="attendance-class-title">Clase - Grupo</h1>
+            <p id="attendance-class-subtitle">Materia</p>
+          </div>
+        </div>
+
+        <div class="attendance-control-card card">
+          <div class="control-row">
+            <div class="input-group">
+              <label for="attendance-date">Fecha de Registro</label>
+              <input type="date" id="attendance-date">
+            </div>
+            <div class="attendance-mode-selector">
+              <button id="btn-mode-list" class="btn btn-secondary active">Lista Diaria</button>
+              <button id="btn-mode-weekly" class="btn btn-secondary">Registro Semanal</button>
+              <button id="btn-mode-monthly" class="btn btn-secondary">Registro Mensual</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- SUB-VISTA 1: LISTA DIARIA -->
+        <div id="subview-daily-list" class="card">
+          <div class="table-responsive">
+            <table class="table">
+              <thead>
+                <tr>
+                  <th>Matrícula</th>
+                  <th>Alumno</th>
+                  <th class="status-selection-header">Estado de Asistencia</th>
+                </tr>
+              </thead>
+              <tbody id="attendance-students-body">
+                <tr>
+                  <td colspan="3" class="text-center">Seleccione un salón para ver los alumnos.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="card-footer">
+            <button id="btn-save-attendance" class="btn btn-primary">
+              <i class="material-icons">save</i>
+              <span>Guardar Asistencia</span>
+            </button>
+            <div id="attendance-save-status" class="status-msg hidden"></div>
+          </div>
+        </div>
+
+        <!-- SUB-VISTA 2: GRID HISTÓRICO (SEMANAL/MENSUAL) -->
+        <div id="subview-history-grid" class="card hidden">
+          <div class="history-grid-header">
+            <h3 id="history-grid-title">Registro de Asistencias</h3>
+            <button id="btn-print-grid-report" class="btn btn-secondary">
+              <i class="material-icons">print</i>
+              <span>Imprimir Registro</span>
+            </button>
+          </div>
+          
+          <div class="table-responsive">
+            <table class="table grid-table" id="history-grid-table">
+              <!-- Creada dinámicamente -->
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- ==================== TAB: REPORTE INDIVIDUAL (COMPARTIDO) ==================== -->
+      <section id="tab-student-search" class="tab-pane hidden">
+        <div class="content-header">
+          <div>
+            <h1>Reporte Individual de Alumno</h1>
+            <p>Busca a un alumno por matrícula o nombre para ver su reporte detallado.</p>
+          </div>
+        </div>
+
+        <div class="card filter-card">
+          <div class="search-row">
+            <div class="input-group search-input-group">
+              <label for="student-search-query">Buscar Alumno</label>
+              <div class="input-wrapper">
+                <i class="material-icons">search</i>
+                <input type="text" id="student-search-query" placeholder="Ingresa matrícula o nombre del alumno...">
+              </div>
+              <div id="search-autocomplete-box" class="autocomplete-box hidden"></div>
+            </div>
+            <div class="filter-actions">
+              <button id="btn-print-student-report" class="btn btn-secondary" disabled>
+                <i class="material-icons">print</i>
+                <span>Imprimir Reporte</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Resultado del Reporte Individual -->
+        <div id="student-report-result" class="hidden">
+          <!-- Imprimible -->
+          <div class="report-print-header">
+            <h2>COLEGIO DE BACHILLERES</h2>
+            <h3>Reporte Individual de Asistencias - SICCE</h3>
+            <p id="student-report-date-text">Generado el: YYYY-MM-DD</p>
+          </div>
+
+          <div class="student-profile-header-card card">
+            <div class="student-avatar-large">
+              <i class="material-icons">school</i>
+            </div>
+            <div class="student-detail-info">
+              <h2 id="student-report-name">Nombre del Alumno</h2>
+              <div class="detail-grid">
+                <div><strong>Matrícula:</strong> <span id="student-report-matricula">-</span></div>
+                <div><strong>Grado/Grupo:</strong> <span id="student-report-group">-</span></div>
+                <div><strong>Correo:</strong> <span id="student-report-email">-</span></div>
+                <div><strong>Estado de Huella:</strong> <span id="student-report-fingerprint">-</span></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="report-stats">
+            <div class="stat-box count-asistencia">
+              <span class="stat-number" id="student-stat-asistencias">0</span>
+              <span class="stat-label">Asistencias</span>
+            </div>
+            <div class="stat-box count-retardo">
+              <span class="stat-number" id="student-stat-retardos">0</span>
+              <span class="stat-label">Retardos</span>
+            </div>
+            <div class="stat-box count-falta">
+              <span class="stat-number" id="student-stat-faltas">0</span>
+              <span class="stat-label">Faltas</span>
+            </div>
+            <div class="stat-box percent-box">
+              <span class="stat-number" id="student-stat-percent">0%</span>
+              <span class="stat-label">% de Asistencia</span>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-header">
+              <h3>Historial de Marcaciones</h3>
+            </div>
+            <div class="table-responsive">
+              <table class="table">
+                <thead>
+                  <tr>
+                    <th>Fecha</th>
+                    <th>Entrada</th>
+                    <th>Salida</th>
+                    <th>Estado</th>
+                    <th>Origen del Registro</th>
+                  </tr>
+                </thead>
+                <tbody id="student-report-table-body">
+                  <tr>
+                    <td colspan="5" class="text-center">No hay registros de asistencias para este alumno.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+
+    </main>
+  </div>
+
+  <!-- ======================================================== -->
+  <!-- MODALES DE DIÁLOGO                                      -->
+  <!-- ======================================================== -->
+
+  <!-- MODAL: REGISTRAR PROFESOR -->
+  <div id="modal-register-teacher" class="modal-overlay hidden">
+    <div class="modal">
+      <div class="modal-header">
+        <h3>Registrar Nuevo Profesor</h3>
+        <button class="btn-close-modal"><i class="material-icons">close</i></button>
+      </div>
+      <div class="modal-body">
+        <form id="form-register-teacher">
+          <div class="input-group">
+            <label for="teacher-name">Nombre Completo</label>
+            <input type="text" id="teacher-name" required placeholder="Ej. Juan Pérez López">
+          </div>
+          <div class="input-group">
+            <label for="teacher-email">Correo Electrónico</label>
+            <input type="email" id="teacher-email" required placeholder="juan.perez@cobach.edu.mx">
+          </div>
+          <div class="input-group">
+            <label for="teacher-password">Contraseña Provisional</label>
+            <input type="password" id="teacher-password" required placeholder="Mínimo 6 caracteres">
+          </div>
+          <div class="modal-actions">
+            <button type="button" class="btn btn-secondary btn-close-modal">Cancelar</button>
+            <button type="submit" class="btn btn-primary">
+              <span>Registrar</span>
+              <div class="spinner hidden" id="register-teacher-spinner"></div>
+            </button>
+          </div>
+          <div id="register-teacher-error" class="error-message hidden"></div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: REGISTRAR ADMINISTRADOR -->
+  <div id="modal-register-admin" class="modal-overlay hidden">
+    <div class="modal">
+      <div class="modal-header">
+        <h3>Registrar Nuevo Administrador</h3>
+        <button class="btn-close-modal"><i class="material-icons">close</i></button>
+      </div>
+      <div class="modal-body">
+        <form id="form-register-admin">
+          <div class="input-group">
+            <label for="admin-name">Nombre Completo</label>
+            <input type="text" id="admin-name" required placeholder="Ej. Lic. Claudia Gómez">
+          </div>
+          <div class="input-group">
+            <label for="admin-email">Correo Electrónico</label>
+            <input type="email" id="admin-email" required placeholder="claudia.gomez@cobach.edu.mx">
+          </div>
+          <div class="input-group">
+            <label for="admin-password">Contraseña</label>
+            <input type="password" id="admin-password" required placeholder="Mínimo 6 caracteres">
+          </div>
+          <div class="modal-actions">
+            <button type="button" class="btn btn-secondary btn-close-modal">Cancelar</button>
+            <button type="submit" class="btn btn-primary">
+              <span>Registrar</span>
+              <div class="spinner hidden" id="register-admin-spinner"></div>
+            </button>
+          </div>
+          <div id="register-admin-error" class="error-message hidden"></div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: GESTIONAR ASIGNACIONES DE PROFESOR -->
+  <div id="modal-manage-assignments" class="modal-overlay hidden">
+    <div class="modal modal-lg">
+      <div class="modal-header">
+        <h3 id="assignment-modal-title">Asignaciones: Profesor Name</h3>
+        <button class="btn-close-modal"><i class="material-icons">close</i></button>
+      </div>
+      <div class="modal-body">
+        <div class="assignment-form card">
+          <h4>Agregar Nueva Asignación</h4>
+          <form id="form-add-assignment" class="inline-form">
+            <div class="input-group">
+              <label for="assign-group">Grupo/Salón</label>
+              <select id="assign-group" required>
+                <option value="">Cargando grupos...</option>
+              </select>
+            </div>
+            <div class="input-group">
+              <label for="assign-subject">Materia</label>
+              <input type="text" id="assign-subject" required placeholder="Ej. Física I">
+            </div>
+            <button type="submit" class="btn btn-primary form-inline-btn">
+              <i class="material-icons">add</i>
+              <span>Asignar</span>
+            </button>
+          </form>
+        </div>
+
+        <div class="assignments-list-container">
+          <h4>Clases Asignadas Actualmente</h4>
+          <div class="table-responsive">
+            <table class="table">
+              <thead>
+                <tr>
+                  <th>Grupo/Salón</th>
+                  <th>Materia</th>
+                  <th class="actions-col">Acción</th>
+                </tr>
+              </thead>
+              <tbody id="assignments-table-body">
+                <tr>
+                  <td colspan="3" class="text-center">No tiene asignaciones</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</body>
+</html>
