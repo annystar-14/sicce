@@ -1,5 +1,6 @@
 import os
 import traceback
+import time
 from datetime import datetime
 
 import psycopg2
@@ -142,13 +143,209 @@ def procesar_asistencia_diaria(db, matricula, nombre, fecha_hora):
 # PROCESO PRINCIPAL
 # =========================
 
-conexion = None
+def sincronizar_once(db):
+    conexion = None
 
-try:
-    print("===================================")
-    print("INICIANDO SINCRONIZACIÓN ZKBIOTIME")
-    print("===================================")
+    try:
+        conexion = psycopg2.connect(
+            host=POSTGRES_HOST,
+            port=POSTGRES_PORT,
+            database=POSTGRES_DB,
+            user=POSTGRES_USER,
+            password=POSTGRES_PASSWORD
+        )
 
+        cursor = conexion.cursor()
+
+        # =========================
+        # EMPLEADOS / ALUMNOS
+        # =========================
+
+        cursor.execute("""
+            SELECT
+                e.id,
+                e.emp_code,
+                e.first_name,
+                e.last_name,
+                e.email,
+                e.gender,
+                e.mobile,
+                e.address,
+                e.birthday,
+                e.department_id,
+                d.dept_name
+            FROM personnel_employee e
+            LEFT JOIN personnel_department d
+                ON e.department_id = d.id
+            ORDER BY e.id ASC
+        """)
+
+        empleados = cursor.fetchall()
+
+        print(f"Empleados encontrados: {len(empleados)}")
+
+        for e in empleados:
+            empleado_id = limpiar(e[0])
+            matricula = limpiar(e[1])
+            nombre = limpiar(e[2])
+            apellidos = limpiar(e[3])
+            correo = limpiar(e[4])
+            sexo = convertir_sexo(e[5])
+            telefono = limpiar(e[6])
+            direccion = limpiar(e[7])
+            cumpleanos = limpiar(e[8])
+            departamento_id = limpiar(e[9])
+            grado_grupo = limpiar(e[10])
+
+            grado, grupo = separar_grado_grupo(grado_grupo)
+
+            nombre_completo = f"{nombre} {apellidos}".strip()
+
+            if not matricula:
+                continue
+
+            doc_ref = db.collection("zktime_empleados").document(matricula)
+            doc = doc_ref.get()
+
+            datos_empleado = {
+                "zk_employee_id": empleado_id,
+                "matricula": matricula,
+                "nombre": nombre,
+                "apellidos": apellidos,
+                "nombreCompleto": nombre_completo,
+                "correo": correo,
+                "sexo": sexo,
+                "telefono": telefono,
+                "direccion": direccion,
+                "cumpleanos": cumpleanos,
+                "department_id": departamento_id,
+                "gradoGrupo": grado_grupo,
+                "grado": grado,
+                "grupo": grupo,
+                "estadoHuella": "registrada",
+                "origen": "ZKBioTime MB160",
+                "fechaSincronizacion": firestore.SERVER_TIMESTAMP
+            }
+
+            if doc.exists:
+                datos_actuales = doc.to_dict()
+
+                if "padreId" not in datos_actuales:
+                    datos_empleado["padreId"] = ""
+
+                doc_ref.set(datos_empleado, merge=True)
+            else:
+                datos_empleado["padreId"] = ""
+                doc_ref.set(datos_empleado)
+
+            escribir_log(f"Alumno sincronizado: {matricula} - {nombre_completo}")
+
+        # =========================
+        # ASISTENCIAS / MARCACIONES
+        # =========================
+
+        cursor.execute("""
+            SELECT
+                t.id,
+                t.emp_id,
+                t.punch_time,
+                e.emp_code,
+                e.first_name,
+                e.last_name,
+                d.dept_name
+            FROM iclock_transaction t
+            JOIN personnel_employee e
+                ON t.emp_id = e.id
+            LEFT JOIN personnel_department d
+                ON e.department_id = d.id
+            ORDER BY t.id ASC
+        """)
+
+        registros = cursor.fetchall()
+
+        print(f"Asistencias encontradas: {len(registros)}")
+
+        for r in registros:
+            zk_id = limpiar(r[0])
+            fecha_hora = formatear_fecha_hora(r[2])
+            matricula = limpiar(r[3])
+            nombre_asistencia = f"{limpiar(r[4])} {limpiar(r[5])}".strip()
+            grado_grupo = limpiar(r[6])
+            grado, grupo = separar_grado_grupo(grado_grupo)
+
+            if not zk_id or not matricula:
+                continue
+
+            # Separar fecha y hora
+            partes = fecha_hora.split(" ")
+            fecha = partes[0] if len(partes) > 0 else ""
+            hora = partes[1] if len(partes) > 1 else ""
+
+            # Determinar tipoRegistro (entrada o salida)
+            doc_diario_ref = db.collection("asistencias_diarias").document(f"{matricula}_{fecha}")
+            doc_diario = doc_diario_ref.get()
+            
+            tipo_registro = "entrada"
+            if doc_diario.exists:
+                diario_data = doc_diario.to_dict()
+                entrada_actual = diario_data.get("entrada", "")
+                if entrada_actual and entrada_actual != hora:
+                    tipo_registro = "salida"
+
+            db.collection("asistencias").document(zk_id).set({
+                "zk_id": zk_id,
+                "matricula": matricula,
+                "matriculaAlumno": matricula,
+                "nombre": nombre_asistencia,
+                "nombreAlumno": nombre_asistencia,
+                "grado": grado,
+                "grupo": grupo,
+                "fecha": fecha,
+                "hora": hora,
+                "tipoRegistro": tipo_registro,
+                "fechaHora": fecha_hora,
+                "origen": "MB160",
+                "fechaSincronizacion": firestore.SERVER_TIMESTAMP
+            }, merge=True)
+
+            procesar_asistencia_diaria(
+                db,
+                matricula,
+                nombre_asistencia,
+                fecha_hora
+            )
+
+            escribir_log(
+                f"Asistencia sincronizada: {zk_id} | {matricula} | {fecha_hora}"
+            )
+
+        mensaje = (
+            f"Sincronización exitosa ZKBioTime. "
+            f"Empleados: {len(empleados)} | "
+            f"Asistencias: {len(registros)}"
+        )
+
+        print(mensaje)
+        escribir_log(mensaje)
+
+    except Exception:
+        error = traceback.format_exc()
+
+        print("ERROR DURANTE LA SINCRONIZACIÓN")
+        print(error)
+
+        escribir_log("ERROR")
+        escribir_log(error)
+
+    finally:
+        if conexion:
+            conexion.close()
+
+
+if __name__ == "__main__":
+    print("==================================================")
+    print("INICIANDO SERVICIO DE SINCRONIZACIÓN AUTOMÁTICA ZK")
+    print("==================================================")
     print("Firebase:", FIREBASE_KEY)
     print("ZKBioTime DB:", POSTGRES_HOST, POSTGRES_PORT)
 
@@ -161,196 +358,18 @@ try:
 
     db = firestore.client()
 
-    conexion = psycopg2.connect(
-        host=POSTGRES_HOST,
-        port=POSTGRES_PORT,
-        database=POSTGRES_DB,
-        user=POSTGRES_USER,
-        password=POSTGRES_PASSWORD
-    )
+    print("\nServicio activo. Sincronizando cada 30 segundos...")
+    print("Presiona Ctrl+C para detener el servicio.\n")
 
-    cursor = conexion.cursor()
-
-    # =========================
-    # EMPLEADOS / ALUMNOS
-    # =========================
-
-    cursor.execute("""
-        SELECT
-            e.id,
-            e.emp_code,
-            e.first_name,
-            e.last_name,
-            e.email,
-            e.gender,
-            e.mobile,
-            e.address,
-            e.birthday,
-            e.department_id,
-            d.dept_name
-        FROM personnel_employee e
-        LEFT JOIN personnel_department d
-            ON e.department_id = d.id
-        ORDER BY e.id ASC
-    """)
-
-    empleados = cursor.fetchall()
-
-    print(f"Empleados encontrados: {len(empleados)}")
-
-    for e in empleados:
-        empleado_id = limpiar(e[0])
-        matricula = limpiar(e[1])
-        nombre = limpiar(e[2])
-        apellidos = limpiar(e[3])
-        correo = limpiar(e[4])
-        sexo = convertir_sexo(e[5])
-        telefono = limpiar(e[6])
-        direccion = limpiar(e[7])
-        cumpleanos = limpiar(e[8])
-        departamento_id = limpiar(e[9])
-        grado_grupo = limpiar(e[10])
-
-        grado, grupo = separar_grado_grupo(grado_grupo)
-
-        nombre_completo = f"{nombre} {apellidos}".strip()
-
-        if not matricula:
-            continue
-
-        doc_ref = db.collection("zktime_empleados").document(matricula)
-        doc = doc_ref.get()
-
-        datos_empleado = {
-            "zk_employee_id": empleado_id,
-            "matricula": matricula,
-            "nombre": nombre,
-            "apellidos": apellidos,
-            "nombreCompleto": nombre_completo,
-            "correo": correo,
-            "sexo": sexo,
-            "telefono": telefono,
-            "direccion": direccion,
-            "cumpleanos": cumpleanos,
-            "department_id": departamento_id,
-            "gradoGrupo": grado_grupo,
-            "grado": grado,
-            "grupo": grupo,
-            "estadoHuella": "registrada",
-            "origen": "ZKBioTime MB160",
-            "fechaSincronizacion": firestore.SERVER_TIMESTAMP
-        }
-
-        if doc.exists:
-            datos_actuales = doc.to_dict()
-
-            if "padreId" not in datos_actuales:
-                datos_empleado["padreId"] = ""
-
-            doc_ref.set(datos_empleado, merge=True)
-        else:
-            datos_empleado["padreId"] = ""
-            doc_ref.set(datos_empleado)
-
-        escribir_log(f"Alumno sincronizado: {matricula} - {nombre_completo}")
-
-    # =========================
-    # ASISTENCIAS / MARCACIONES
-    # =========================
-
-    cursor.execute("""
-        SELECT
-            t.id,
-            t.emp_id,
-            t.punch_time,
-            e.emp_code,
-            e.first_name,
-            e.last_name,
-            d.dept_name
-        FROM iclock_transaction t
-        JOIN personnel_employee e
-            ON t.emp_id = e.id
-        LEFT JOIN personnel_department d
-            ON e.department_id = d.id
-        ORDER BY t.id ASC
-    """)
-
-    registros = cursor.fetchall()
-
-    print(f"Asistencias encontradas: {len(registros)}")
-
-    for r in registros:
-        zk_id = limpiar(r[0])
-        fecha_hora = formatear_fecha_hora(r[2])
-        matricula = limpiar(r[3])
-        nombre_asistencia = f"{limpiar(r[4])} {limpiar(r[5])}".strip()
-        grado_grupo = limpiar(r[6])
-        grado, grupo = separar_grado_grupo(grado_grupo)
-
-        if not zk_id or not matricula:
-            continue
-
-        # Separar fecha y hora
-        partes = fecha_hora.split(" ")
-        fecha = partes[0] if len(partes) > 0 else ""
-        hora = partes[1] if len(partes) > 1 else ""
-
-        # Determinar tipoRegistro (entrada o salida)
-        doc_diario_ref = db.collection("asistencias_diarias").document(f"{matricula}_{fecha}")
-        doc_diario = doc_diario_ref.get()
+    while True:
+        try:
+            print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Ejecutando sincronización...")
+            sincronizar_once(db)
+        except KeyboardInterrupt:
+            print("\nServicio detenido por el usuario.")
+            break
+        except Exception as e:
+            print(f"Error crítico en el bucle principal: {e}")
+            escribir_log(f"CRITICAL LOOP ERROR: {e}")
         
-        tipo_registro = "entrada"
-        if doc_diario.exists:
-            diario_data = doc_diario.to_dict()
-            entrada_actual = diario_data.get("entrada", "")
-            if entrada_actual and entrada_actual != hora:
-                tipo_registro = "salida"
-
-        db.collection("asistencias").document(zk_id).set({
-            "zk_id": zk_id,
-            "matricula": matricula,
-            "matriculaAlumno": matricula,
-            "nombre": nombre_asistencia,
-            "nombreAlumno": nombre_asistencia,
-            "grado": grado,
-            "grupo": grupo,
-            "fecha": fecha,
-            "hora": hora,
-            "tipoRegistro": tipo_registro,
-            "fechaHora": fecha_hora,
-            "origen": "MB160",
-            "fechaSincronizacion": firestore.SERVER_TIMESTAMP
-        }, merge=True)
-
-        procesar_asistencia_diaria(
-            db,
-            matricula,
-            nombre_asistencia,
-            fecha_hora
-        )
-
-        escribir_log(
-            f"Asistencia sincronizada: {zk_id} | {matricula} | {fecha_hora}"
-        )
-
-    mensaje = (
-        f"Sincronización exitosa ZKBioTime. "
-        f"Empleados: {len(empleados)} | "
-        f"Asistencias: {len(registros)}"
-    )
-
-    print(mensaje)
-    escribir_log(mensaje)
-
-except Exception:
-    error = traceback.format_exc()
-
-    print("ERROR DURANTE LA SINCRONIZACIÓN")
-    print(error)
-
-    escribir_log("ERROR")
-    escribir_log(error)
-
-finally:
-    if conexion:
-        conexion.close()
+        time.sleep(30)
