@@ -1,4 +1,6 @@
 import os
+import sys
+import socket
 import traceback
 import time
 from datetime import datetime
@@ -6,6 +8,18 @@ from datetime import datetime
 import psycopg2
 import firebase_admin
 from firebase_admin import credentials, firestore
+
+_lock_socket = None
+
+
+def evitar_multiples_instancias():
+    global _lock_socket
+    try:
+        _lock_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        _lock_socket.bind(('127.0.0.1', 49999))
+    except socket.error:
+        print("Ya hay una instancia de puente.py ejecutándose en segundo plano. Saliendo de esta instancia repetida.")
+        sys.exit(0)
 
 
 # =========================
@@ -343,6 +357,7 @@ def sincronizar_once(db):
 
 
 if __name__ == "__main__":
+    evitar_multiples_instancias()
     print("==================================================")
     print("INICIANDO SERVICIO DE SINCRONIZACIÓN AUTOMÁTICA ZK")
     print("==================================================")
