@@ -242,6 +242,26 @@ function setupUIEventListeners() {
   document.getElementById("form-add-calendar-event").addEventListener("submit", handleSaveCalendarEvent);
   document.getElementById("students-search-filter").addEventListener("input", filterAdminStudentsList);
   
+  // Filtros de MB160 (Admin)
+  const btnFilterMb160 = document.getElementById("btn-filter-mb160");
+  if (btnFilterMb160) {
+    btnFilterMb160.addEventListener("click", loadAdminMb160Attendance);
+  }
+  const btnPrintMb160 = document.getElementById("btn-print-mb160");
+  if (btnPrintMb160) {
+    btnPrintMb160.addEventListener("click", () => window.print());
+  }
+
+  // Filtros de MB160 (Teacher)
+  const btnModeMb160 = document.getElementById("btn-mode-mb160");
+  if (btnModeMb160) {
+    btnModeMb160.addEventListener("click", () => toggleAttendanceMode("mb160"));
+  }
+  const btnPrintTeacherMb160 = document.getElementById("btn-print-teacher-mb160");
+  if (btnPrintTeacherMb160) {
+    btnPrintTeacherMb160.addEventListener("click", () => window.print());
+  }
+
   // Event Listeners para Alertas (Teacher y Admin)
   const formReport = document.getElementById("form-report-student");
   if (formReport) formReport.addEventListener("submit", handleReportStudentSubmit);
@@ -270,6 +290,12 @@ function switchTab(tabId) {
   if (tabId === "admin-alerts") {
     const filterType = document.getElementById("alert-type-filter").value;
     renderAlertsTable(filterType);
+  } else if (tabId === "admin-mb160-attendance") {
+    const filterDateInput = document.getElementById("mb160-filter-date");
+    if (filterDateInput && !filterDateInput.value) {
+      filterDateInput.value = getTodayLocalDate();
+    }
+    loadAdminMb160Attendance();
   }
 }
 
@@ -431,6 +457,12 @@ async function loadUniqueGroups() {
     // Poblar select de asignaciones del modal
     const assignSelect = document.getElementById("assign-group");
     assignSelect.innerHTML = '<option value="">Seleccione un grupo</option>';
+
+    // Poblar select de asistencias MB160
+    const mb160Select = document.getElementById("mb160-filter-group");
+    if (mb160Select) {
+      mb160Select.innerHTML = '<option value="">Todos los grupos</option>';
+    }
     
     allGroups.forEach(g => {
       const opt1 = document.createElement("option");
@@ -442,6 +474,13 @@ async function loadUniqueGroups() {
       opt2.value = g;
       opt2.textContent = g;
       assignSelect.appendChild(opt2);
+
+      if (mb160Select) {
+        const opt3 = document.createElement("option");
+        opt3.value = g;
+        opt3.textContent = g;
+        mb160Select.appendChild(opt3);
+      }
     });
   } catch (error) {
     console.error("Error al cargar grupos únicos:", error);
@@ -823,8 +862,14 @@ function toggleAttendanceMode(mode) {
   document.getElementById("btn-mode-weekly").classList.remove("active");
   document.getElementById("btn-mode-monthly").classList.remove("active");
   
+  const btnModeMb160 = document.getElementById("btn-mode-mb160");
+  if (btnModeMb160) btnModeMb160.classList.remove("active");
+  
   document.getElementById("subview-daily-list").classList.add("hidden");
   document.getElementById("subview-history-grid").classList.add("hidden");
+  
+  const subviewMb160 = document.getElementById("subview-teacher-mb160");
+  if (subviewMb160) subviewMb160.classList.add("hidden");
   
   if (mode === "daily") {
     document.getElementById("btn-mode-list").classList.add("active");
@@ -838,6 +883,10 @@ function toggleAttendanceMode(mode) {
     document.getElementById("btn-mode-monthly").classList.add("active");
     document.getElementById("subview-history-grid").classList.remove("hidden");
     loadHistoryGrid("monthly");
+  } else if (mode === "mb160") {
+    if (btnModeMb160) btnModeMb160.classList.add("active");
+    if (subviewMb160) subviewMb160.classList.remove("hidden");
+    loadTeacherMb160Attendance();
   }
 }
 
@@ -1934,3 +1983,153 @@ async function handleMarkAlertAtendida() {
     alert("Error al actualizar el estado de la alerta: " + error.message);
   }
 }
+
+// ==========================================================================
+// 9. REPORTE Y CONSULTA DE ASISTENCIAS MB160 (ADMIN & MAESTRO)
+// ==========================================================================
+
+async function loadAdminMb160Attendance() {
+  const tbody = document.getElementById("mb160-attendance-tbody");
+  if (!tbody) return;
+  tbody.innerHTML = '<tr><td colspan="6" class="text-center">Cargando marcaciones...</td></tr>';
+  
+  const dateVal = document.getElementById("mb160-filter-date").value || getTodayLocalDate();
+  const groupVal = document.getElementById("mb160-filter-group").value;
+  
+  try {
+    const snapshot = await db.collection("asistencias")
+      .where("fecha", "==", dateVal)
+      .get();
+      
+    if (snapshot.empty) {
+      tbody.innerHTML = '<tr><td colspan="6" class="text-center">No hay registros de asistencias para esta fecha.</td></tr>';
+      return;
+    }
+    
+    // Mapear alumnos para filtrar en memoria por grupo y obtener su información
+    const studentMap = {};
+    allStudents.forEach(s => {
+      studentMap[s.matricula] = s;
+    });
+    
+    const records = [];
+    snapshot.forEach(doc => {
+      records.push(doc.data());
+    });
+    
+    // Ordenar por fechaHora desc
+    records.sort((a, b) => b.fechaHora.localeCompare(a.fechaHora));
+    
+    tbody.innerHTML = "";
+    let renderedCount = 0;
+    
+    records.forEach(r => {
+      const student = studentMap[r.matricula];
+      const studentGradoGrupo = student ? student.gradoGrupo : (r.grado && r.grupo ? `${r.grado}${r.grupo}` : "N/A");
+      
+      // Filtrar por grupo si se seleccionó uno
+      if (groupVal && studentGradoGrupo !== groupVal) {
+        return;
+      }
+      
+      renderedCount++;
+      const tr = document.createElement("tr");
+      
+      // Formatear tipo de registro
+      const tipo = r.tipoRegistro || "entrada";
+      const tipoBadge = tipo === "entrada"
+        ? `<span class="badge" style="background-color:rgba(16,185,129,0.1); color:var(--color-success)">Entrada</span>`
+        : `<span class="badge" style="background-color:rgba(245,158,11,0.1); color:var(--color-warning)">Salida</span>`;
+        
+      tr.innerHTML = `
+        <td><strong>${formatDateToShow(r.fecha)} ${r.hora || ""}</strong></td>
+        <td>${r.matricula}</td>
+        <td><strong>${r.nombreAlumno || r.nombre}</strong></td>
+        <td><span class="badge badge-teacher">${studentGradoGrupo}</span></td>
+        <td>${tipoBadge}</td>
+        <td style="color:#64748b; font-size:0.8rem;">${r.origen || "MB160"}</td>
+      `;
+      tbody.appendChild(tr);
+    });
+    
+    if (renderedCount === 0) {
+      tbody.innerHTML = '<tr><td colspan="6" class="text-center">No hay registros de asistencia para el grupo seleccionado en esta fecha.</td></tr>';
+    }
+  } catch (error) {
+    console.error("Error al cargar asistencias admin MB160:", error);
+    tbody.innerHTML = '<tr><td colspan="6" class="text-center error-message">Error al consultar base de datos.</td></tr>';
+  }
+}
+
+async function loadTeacherMb160Attendance() {
+  const tbody = document.getElementById("teacher-mb160-tbody");
+  if (!tbody) return;
+  tbody.innerHTML = '<tr><td colspan="5" class="text-center">Cargando marcaciones...</td></tr>';
+  
+  if (!activeClass) return;
+  const fecha = document.getElementById("attendance-date").value || getTodayLocalDate();
+  
+  try {
+    // 1. Obtener alumnos en este salón
+    const studentSnapshot = await db.collection("zktime_empleados").where("gradoGrupo", "==", activeClass.gradoGrupo).get();
+    
+    if (studentSnapshot.empty) {
+      tbody.innerHTML = '<tr><td colspan="5" class="text-center">No hay alumnos asignados a este grupo.</td></tr>';
+      return;
+    }
+    
+    const studentMatriculas = new Set();
+    const studentMap = {};
+    studentSnapshot.forEach(doc => {
+      const data = doc.data();
+      studentMatriculas.add(data.matricula);
+      studentMap[data.matricula] = data.nombreCompleto || `${data.nombre} ${data.apellidos}`;
+    });
+    
+    // 2. Obtener asistencias para este día
+    const snapshot = await db.collection("asistencias")
+      .where("fecha", "==", fecha)
+      .get();
+      
+    const records = [];
+    snapshot.forEach(doc => {
+      const data = doc.data();
+      if (studentMatriculas.has(data.matricula)) {
+        records.push(data);
+      }
+    });
+    
+    // Ordenar por fechaHora desc
+    records.sort((a, b) => b.fechaHora.localeCompare(a.fechaHora));
+    
+    tbody.innerHTML = "";
+    if (records.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="5" class="text-center">No hay marcaciones biométricas registradas para este grupo en esta fecha.</td></tr>';
+      return;
+    }
+    
+    records.forEach(r => {
+      const tr = document.createElement("tr");
+      const tipo = r.tipoRegistro || "entrada";
+      const tipoBadge = tipo === "entrada"
+        ? `<span class="badge" style="background-color:rgba(16,185,129,0.1); color:var(--color-success)">Entrada</span>`
+        : `<span class="badge" style="background-color:rgba(245,158,11,0.1); color:var(--color-warning)">Salida</span>`;
+        
+      tr.innerHTML = `
+        <td><strong>${formatDateToShow(r.fecha)} ${r.hora || ""}</strong></td>
+        <td>${r.matricula}</td>
+        <td><strong>${studentMap[r.matricula] || r.nombre}</strong></td>
+        <td>${tipoBadge}</td>
+        <td style="color:#64748b; font-size:0.8rem;">${r.origen || "MB160"}</td>
+      `;
+      tbody.appendChild(tr);
+    });
+  } catch (error) {
+    console.error("Error al cargar asistencias teacher MB160:", error);
+    tbody.innerHTML = '<tr><td colspan="5" class="text-center error-message">Error al cargar marcaciones.</td></tr>';
+  }
+}
+
+// Exponer funciones globalmente
+window.loadAdminMb160Attendance = loadAdminMb160Attendance;
+window.loadTeacherMb160Attendance = loadTeacherMb160Attendance;

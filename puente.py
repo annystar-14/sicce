@@ -265,10 +265,13 @@ try:
             t.punch_time,
             e.emp_code,
             e.first_name,
-            e.last_name
+            e.last_name,
+            d.dept_name
         FROM iclock_transaction t
         JOIN personnel_employee e
             ON t.emp_id = e.id
+        LEFT JOIN personnel_department d
+            ON e.department_id = d.id
         ORDER BY t.id ASC
     """)
 
@@ -281,16 +284,41 @@ try:
         fecha_hora = formatear_fecha_hora(r[2])
         matricula = limpiar(r[3])
         nombre_asistencia = f"{limpiar(r[4])} {limpiar(r[5])}".strip()
+        grado_grupo = limpiar(r[6])
+        grado, grupo = separar_grado_grupo(grado_grupo)
 
         if not zk_id or not matricula:
             continue
 
+        # Separar fecha y hora
+        partes = fecha_hora.split(" ")
+        fecha = partes[0] if len(partes) > 0 else ""
+        hora = partes[1] if len(partes) > 1 else ""
+
+        # Determinar tipoRegistro (entrada o salida)
+        doc_diario_ref = db.collection("asistencias_diarias").document(f"{matricula}_{fecha}")
+        doc_diario = doc_diario_ref.get()
+        
+        tipo_registro = "entrada"
+        if doc_diario.exists:
+            diario_data = doc_diario.to_dict()
+            entrada_actual = diario_data.get("entrada", "")
+            if entrada_actual and entrada_actual != hora:
+                tipo_registro = "salida"
+
         db.collection("asistencias").document(zk_id).set({
             "zk_id": zk_id,
             "matricula": matricula,
-            "fechaHora": fecha_hora,
+            "matriculaAlumno": matricula,
             "nombre": nombre_asistencia,
-            "origen": "ZKBioTime MB160",
+            "nombreAlumno": nombre_asistencia,
+            "grado": grado,
+            "grupo": grupo,
+            "fecha": fecha,
+            "hora": hora,
+            "tipoRegistro": tipo_registro,
+            "fechaHora": fecha_hora,
+            "origen": "MB160",
             "fechaSincronizacion": firestore.SERVER_TIMESTAMP
         }, merge=True)
 

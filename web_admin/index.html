@@ -116,6 +116,10 @@
             <span>Alertas Escolares</span>
             <span id="alerts-count-badge" class="badge badge-alert-count hidden">0</span>
           </a>
+          <a href="#" class="nav-item" data-tab="admin-mb160-attendance">
+            <i class="material-icons">fingerprint</i>
+            <span>Asistencias MB160</span>
+          </a>
           <a href="#" class="nav-item" data-tab="admin-admins">
             <i class="material-icons">security</i>
             <span>Administradores</span>
@@ -470,6 +474,63 @@
         </div>
       </section>
 
+      <!-- ==================== TAB: ASISTENCIAS MB160 (ADMIN) ==================== -->
+      <section id="tab-admin-mb160-attendance" class="tab-pane hidden">
+        <div class="content-header">
+          <div>
+            <h1>Historial de Marcaciones MB160</h1>
+            <p>Consulta las transacciones de asistencia en tiempo real provenientes del dispositivo biométrico MB160.</p>
+          </div>
+        </div>
+
+        <div class="card filter-card">
+          <div class="filter-row">
+            <div class="input-group">
+              <label for="mb160-filter-date">Fecha de Marcación</label>
+              <input type="date" id="mb160-filter-date">
+            </div>
+            <div class="input-group">
+              <label for="mb160-filter-group">Grupo/Salón</label>
+              <select id="mb160-filter-group">
+                <option value="">Todos los grupos</option>
+              </select>
+            </div>
+            <div class="filter-actions">
+              <button id="btn-filter-mb160" class="btn btn-primary">
+                <i class="material-icons">search</i>
+                <span>Buscar</span>
+              </button>
+              <button id="btn-print-mb160" class="btn btn-secondary">
+                <i class="material-icons">print</i>
+                <span>Imprimir</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="table-responsive">
+            <table class="table" id="mb160-attendance-table">
+              <thead>
+                <tr>
+                  <th>Fecha/Hora</th>
+                  <th>Matrícula</th>
+                  <th>Alumno</th>
+                  <th>Grado/Grupo</th>
+                  <th>Tipo Registro</th>
+                  <th>Origen</th>
+                </tr>
+              </thead>
+              <tbody id="mb160-attendance-tbody">
+                <tr>
+                  <td colspan="6" class="text-center">Seleccione un día y presione Buscar para consultar marcaciones.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
       <!-- ==================== TAB: MIS SALONES (TEACHER) ==================== -->
       <section id="tab-teacher-dashboard" class="tab-pane hidden">
         <div class="content-header">
@@ -508,6 +569,7 @@
               <button id="btn-mode-list" class="btn btn-secondary active">Lista Diaria</button>
               <button id="btn-mode-weekly" class="btn btn-secondary">Registro Semanal</button>
               <button id="btn-mode-monthly" class="btn btn-secondary">Registro Mensual</button>
+              <button id="btn-mode-mb160" class="btn btn-secondary">Asistencias MB160</button>
             </div>
           </div>
         </div>
@@ -553,6 +615,35 @@
           <div class="table-responsive">
             <table class="table grid-table" id="history-grid-table">
               <!-- Creada dinámicamente -->
+            </table>
+          </div>
+        </div>
+
+        <!-- SUB-VISTA 3: ASISTENCIAS MB160 CRUDAS (TEACHER) -->
+        <div id="subview-teacher-mb160" class="card hidden">
+          <div class="history-grid-header">
+            <h3>Marcaciones del Biométrico MB160</h3>
+            <button id="btn-print-teacher-mb160" class="btn btn-secondary">
+              <i class="material-icons">print</i>
+              <span>Imprimir Registro</span>
+            </button>
+          </div>
+          <div class="table-responsive" style="margin-top: 1rem;">
+            <table class="table">
+              <thead>
+                <tr>
+                  <th>Fecha/Hora</th>
+                  <th>Matrícula</th>
+                  <th>Alumno</th>
+                  <th>Tipo Registro</th>
+                  <th>Origen</th>
+                </tr>
+              </thead>
+              <tbody id="teacher-mb160-tbody">
+                <tr>
+                  <td colspan="5" class="text-center">Cargando marcaciones...</td>
+                </tr>
+              </tbody>
             </table>
           </div>
         </div>

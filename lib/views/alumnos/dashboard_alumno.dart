@@ -177,7 +177,7 @@ Widget _buildInicio(DashboardAlumnoViewModel vm) {
           child: Padding(
             padding: const EdgeInsets.all(20),
             child: ultima == null
-                ? const Text("No hay registro biométrico de hoy")
+                ? const Text("Aún no tienes asistencia registrada hoy")
                 : Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
