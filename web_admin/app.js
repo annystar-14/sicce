@@ -1279,7 +1279,6 @@ async function loadIndividualStudentReport(student) {
     // Consultar asistencias del alumno
     const snapshot = await db.collection("asistencias_diarias")
       .where("matricula", "==", student.matricula)
-      .orderBy("fecha", "desc")
       .get();
       
     tbody.innerHTML = "";
@@ -1299,8 +1298,14 @@ async function loadIndividualStudentReport(student) {
       return;
     }
     
+    // Convert to array and sort in-memory
+    const docs = [];
     snapshot.forEach(doc => {
-      const data = doc.data();
+      docs.push({ id: doc.id, ...doc.data() });
+    });
+    docs.sort((a, b) => b.fecha.localeCompare(a.fecha));
+    
+    docs.forEach(data => {
       const estado = data.estado;
       
       if (estado === "Asistencia") aCount++;

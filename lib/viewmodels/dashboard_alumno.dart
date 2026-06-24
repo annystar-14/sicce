@@ -70,7 +70,6 @@ class DashboardAlumnoViewModel extends ChangeNotifier {
       final querySnapshot = await FirebaseFirestore.instance
           .collection('asistencias_diarias')
           .where('matricula', isEqualTo: matricula)
-          .orderBy('fecha', descending: true)
           .get();
 
       _historial = [];
@@ -80,11 +79,14 @@ class DashboardAlumnoViewModel extends ChangeNotifier {
       _retardosCount = 0;
       _faltasCount = 0;
 
-      for (var doc in querySnapshot.docs) {
-        final asistencia = Asistencia.fromMap(doc.data());
+      final list = querySnapshot.docs
+          .map((doc) => Asistencia.fromMap(doc.data()))
+          .toList();
 
-        _historial.add(asistencia);
+      list.sort((a, b) => b.fecha.compareTo(a.fecha));
+      _historial = list;
 
+      for (var asistencia in _historial) {
         if (asistencia.fecha == fechaHoy) {
           _todayAsistencia = asistencia;
         }
