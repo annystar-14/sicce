@@ -288,6 +288,107 @@ def procesar_asistencia_diaria(db, matricula, nombre, fecha_hora):
 # =========================
 
 def sincronizar_once(db):
+    # ==========================================
+    # PROCESAR SOLICITUDES DE BAJA (DELETIONS)
+    # ==========================================
+    try:
+        bajas_ref = db.collection("bajas_pendientes").where("estado", "==", "pendiente").get()
+        if len(bajas_ref) > 0:
+            print(f"Procesando {len(bajas_ref)} solicitudes de baja pendientes...")
+            
+            # Conexión independiente para bajas
+            conexion_baja = psycopg2.connect(
+                host=POSTGRES_HOST,
+                port=POSTGRES_PORT,
+                database=POSTGRES_DB,
+                user=POSTGRES_USER,
+                password=POSTGRES_PASSWORD
+            )
+            cursor_baja = conexion_baja.cursor()
+            
+            for doc in bajas_ref:
+                baja_data = doc.to_dict()
+                matricula = baja_data.get("matricula")
+                nombre_baja = baja_data.get("nombre", "")
+                
+                if not matricula:
+                    continue
+                
+                escribir_log(f"Iniciando proceso de baja para matrícula: {matricula} - {nombre_baja}")
+                print(f"Baja de: {matricula} - {nombre_baja}")
+                
+                try:
+                    conexion_baja.autocommit = False
+                    
+                    # 1. Obtener ID del empleado
+                    cursor_baja.execute("SELECT id FROM personnel_employee WHERE emp_code = %s", (matricula,))
+                    res_emp = cursor_baja.fetchone()
+                    
+                    if res_emp:
+                        emp_id = res_emp[0]
+                        
+                        # Obtener todas las FKs que apuntan a personnel_employee
+                        cursor_baja.execute("""
+                            SELECT
+                                tc.table_name AS foreign_table,
+                                kcu.column_name AS foreign_column,
+                                ccu.table_name AS referenced_table,
+                                ccu.column_name AS referenced_column
+                            FROM 
+                                information_schema.table_constraints AS tc 
+                                JOIN information_schema.key_column_usage AS kcu
+                                  ON tc.constraint_name = kcu.constraint_name
+                                  AND tc.table_schema = kcu.table_schema
+                                JOIN information_schema.constraint_column_usage AS ccu
+                                  ON ccu.constraint_name = tc.constraint_name
+                                  AND ccu.table_schema = tc.table_schema
+                            WHERE tc.constraint_type = 'FOREIGN KEY' 
+                              AND ccu.table_name = 'personnel_employee';
+                        """)
+                        fks = cursor_baja.fetchall()
+                        
+                        # Limpiar referencias
+                        for table, col, ref_table, ref_col in fks:
+                            if table == "personnel_employee" and col == "superior_id":
+                                cursor_baja.execute("UPDATE personnel_employee SET superior_id = NULL WHERE superior_id = %s", (emp_id,))
+                            elif table == "personnel_department" and col == "dept_manager_id":
+                                cursor_baja.execute("UPDATE personnel_department SET dept_manager_id = NULL WHERE dept_manager_id = %s", (emp_id,))
+                            elif table == "personnel_employee" and col == "id":
+                                continue
+                            else:
+                                cursor_baja.execute(f"DELETE FROM {table} WHERE {col} = %s", (emp_id,))
+                        
+                        # Eliminar el registro del empleado
+                        cursor_baja.execute("DELETE FROM personnel_employee WHERE id = %s", (emp_id,))
+                        conexion_baja.commit()
+                        escribir_log(f"Empleado {matricula} eliminado de PostgreSQL ZKBioTime.")
+                        print(f"Empleado {matricula} eliminado de PostgreSQL.")
+                    else:
+                        escribir_log(f"Empleado {matricula} no se encontró en PostgreSQL (ZKBioTime).")
+                        print(f"Empleado {matricula} no se encontró en PostgreSQL.")
+                    
+                    # 2. Eliminar de Firebase Firestore
+                    db.collection("zktime_empleados").document(matricula).delete()
+                    # Borrar la solicitud de baja ya procesada
+                    db.collection("bajas_pendientes").document(matricula).delete()
+                    escribir_log(f"Empleado {matricula} eliminado de Firestore y solicitud borrada.")
+                    print(f"Empleado {matricula} eliminado de Firestore.")
+                    
+                except Exception as e_inner:
+                    conexion_baja.rollback()
+                    escribir_log(f"Error procesando baja de {matricula}: {e_inner}")
+                    print(f"Error procesando baja de {matricula}: {e_inner}")
+                    # Actualizar estado a error para no ciclar infinitamente si es un error permanente
+                    db.collection("bajas_pendientes").document(matricula).update({
+                        "estado": "error",
+                        "error_msg": str(e_inner)
+                    })
+                    
+            conexion_baja.close()
+    except Exception as e_outer:
+        escribir_log(f"Error general en bajas: {e_outer}")
+        print(f"Error general en bajas: {e_outer}")
+
     conexion = None
 
     try:
@@ -311,6 +412,10 @@ def sincronizar_once(db):
         # =========================
         # EMPLEADOS / ALUMNOS
         # =========================
+
+        # Obtener IDs de empleados con huella dactilar registrada (bio_type = 1)
+        cursor.execute("SELECT DISTINCT employee_id FROM iclock_biodata WHERE bio_type = 1")
+        empleados_con_huella = {r[0] for r in cursor.fetchall() if r[0] is not None}
 
         cursor.execute("""
             SELECT
@@ -336,7 +441,8 @@ def sincronizar_once(db):
         print(f"Empleados encontrados: {len(empleados)}")
 
         for e in empleados:
-            empleado_id = limpiar(e[0])
+            empleado_id_raw = e[0]
+            empleado_id = limpiar(empleado_id_raw)
             matricula = limpiar(e[1])
             nombre = limpiar(e[2])
             apellidos = limpiar(e[3])
@@ -358,6 +464,9 @@ def sincronizar_once(db):
             doc_ref = db.collection("zktime_empleados").document(matricula)
             doc = doc_ref.get()
 
+            # Validar si el empleado_id_raw (número entero) está en el set de huellas
+            estado_huella = "registrada" if empleado_id_raw in empleados_con_huella else "no registrada"
+
             datos_empleado = {
                 "zk_employee_id": empleado_id,
                 "matricula": matricula,
@@ -373,7 +482,7 @@ def sincronizar_once(db):
                 "gradoGrupo": grado_grupo,
                 "grado": grado,
                 "grupo": grupo,
-                "estadoHuella": "registrada",
+                "estadoHuella": estado_huella,
                 "origen": "ZKBioTime MB160",
                 "fechaSincronizacion": firestore.SERVER_TIMESTAMP
             }
@@ -389,7 +498,7 @@ def sincronizar_once(db):
                 datos_empleado["padreId"] = ""
                 doc_ref.set(datos_empleado)
 
-            escribir_log(f"Alumno sincronizado: {matricula} - {nombre_completo}")
+            escribir_log(f"Alumno sincronizado: {matricula} - {nombre_completo} (Huella: {estado_huella})")
 
         # =========================
         # ASISTENCIAS / MARCACIONES

@@ -399,13 +399,19 @@
         </div>
 
         <div class="card filter-card">
-          <div class="filter-row">
-            <div class="input-group" style="flex: 2;">
+          <div class="filter-row" style="display: flex; gap: 20px; align-items: center; flex-wrap: wrap;">
+            <div class="input-group" style="flex: 2; min-width: 250px;">
               <label for="students-search-filter">Buscar Alumno</label>
               <div class="input-wrapper">
                 <i class="material-icons">search</i>
-                <input type="text" id="students-search-filter" placeholder="Buscar por matrícula, nombre, grado o grupo...">
+                <input type="text" id="students-search-filter" placeholder="Buscar por matrícula o nombre...">
               </div>
+            </div>
+            <div class="input-group" style="flex: 1; min-width: 180px;">
+              <label for="students-filter-group">Filtrar por Grupo</label>
+              <select id="students-filter-group" class="form-control" style="width: 100%; height: 42px; padding: 0 10px; border-radius: 6px; border: 1px solid #cbd5e1;">
+                <option value="">Todos los grupos</option>
+              </select>
             </div>
           </div>
         </div>
@@ -422,11 +428,12 @@
                   <th>Dirección</th>
                   <th>Biométrico</th>
                   <th>Tutor Vinculado</th>
+                  <th>Acciones</th>
                 </tr>
               </thead>
               <tbody id="admin-students-table-body">
                 <tr>
-                  <td colspan="7" class="text-center">Cargando alumnos...</td>
+                  <td colspan="8" class="text-center">Cargando alumnos...</td>
                 </tr>
               </tbody>
             </table>

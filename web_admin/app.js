@@ -241,6 +241,10 @@ function setupUIEventListeners() {
   // Formulario y Filtros Nuevos (Admin)
   document.getElementById("form-add-calendar-event").addEventListener("submit", handleSaveCalendarEvent);
   document.getElementById("students-search-filter").addEventListener("input", filterAdminStudentsList);
+  const studentsGroupFilter = document.getElementById("students-filter-group");
+  if (studentsGroupFilter) {
+    studentsGroupFilter.addEventListener("change", filterAdminStudentsList);
+  }
   
   // Filtros de MB160 (Admin)
   const btnFilterMb160 = document.getElementById("btn-filter-mb160");
@@ -464,6 +468,12 @@ async function loadUniqueGroups() {
       mb160Select.innerHTML = '<option value="">Todos los grupos</option>';
     }
     
+    // Poblar select de filtrado de alumnos
+    const studentsSelect = document.getElementById("students-filter-group");
+    if (studentsSelect) {
+      studentsSelect.innerHTML = '<option value="">Todos los grupos</option>';
+    }
+    
     allGroups.forEach(g => {
       const opt1 = document.createElement("option");
       opt1.value = g;
@@ -480,6 +490,13 @@ async function loadUniqueGroups() {
         opt3.value = g;
         opt3.textContent = g;
         mb160Select.appendChild(opt3);
+      }
+      
+      if (studentsSelect) {
+        const opt4 = document.createElement("option");
+        opt4.value = g;
+        opt4.textContent = g;
+        studentsSelect.appendChild(opt4);
       }
     });
   } catch (error) {
@@ -912,10 +929,10 @@ async function loadClassStudentsForAttendance() {
       .where("fecha", "==", fecha)
       .get();
       
-    const savedStates = {};
+    const savedRecords = {};
     attendanceSnapshot.forEach(doc => {
       const data = doc.data();
-      savedStates[data.matricula] = data.estado; // "Asistencia", "Retardo", "Falta"
+      savedRecords[data.matricula] = data; // Guardamos el registro completo
     });
     
     // 3. Renderizar la tabla de alumnos
@@ -936,13 +953,44 @@ async function loadClassStudentsForAttendance() {
       const matricula = student.matricula;
       const name = student.nombreCompleto || `${student.nombre} ${student.apellidos}`;
       
-      // Si ya hay un estado guardado, lo usamos. Si no, seleccionamos Asistencia por defecto.
-      const estadoActual = savedStates[matricula] || "Asistencia";
+      // Obtener el registro preexistente si lo hay
+      const savedRecord = savedRecords[matricula];
+      // Por defecto si no tiene registro, el estado es "Falta"
+      const estadoActual = savedRecord ? savedRecord.estado : "Falta";
+      
+      // Construir badge con hora y origen si existe
+      let infoBadge = "";
+      if (savedRecord && savedRecord.entrada) {
+        const timeFmt = savedRecord.entrada.substring(0, 5); // HH:MM
+        const esBio = (savedRecord.origen || "").toLowerCase().includes("biom") || (savedRecord.origen || "").includes("MB160");
+        const icon = esBio ? "fingerprint" : "language";
+        const label = esBio ? "Biométrico" : "Portal";
+        const badgeColor = esBio 
+          ? "background-color: rgba(16, 185, 129, 0.1); color: var(--color-success); border: 1px solid rgba(16, 185, 129, 0.2);" 
+          : "background-color: rgba(30, 64, 175, 0.1); color: var(--color-primary); border: 1px solid rgba(30, 64, 175, 0.2);";
+        
+        infoBadge = `
+          <div style="margin-top: 4px; display: inline-flex; align-items: center; gap: 4px; font-size: 0.75rem; padding: 2px 6px; border-radius: 4px; ${badgeColor}">
+            <i class="material-icons" style="font-size: 12px;">${icon}</i>
+            <span>${label}: ${timeFmt}</span>
+          </div>
+        `;
+      }
       
       const tr = document.createElement("tr");
+      // Almacenar valores originales para preservarlos en el guardado
+      tr.setAttribute("data-entrada", savedRecord ? (savedRecord.entrada || "") : "");
+      tr.setAttribute("data-salida", savedRecord ? (savedRecord.salida || "") : "");
+      tr.setAttribute("data-origen", savedRecord ? (savedRecord.origen || "") : "");
+      
       tr.innerHTML = `
         <td>${matricula}</td>
-        <td><strong>${name}</strong></td>
+        <td>
+          <div style="display: flex; flex-direction: column;">
+            <strong>${name}</strong>
+            ${infoBadge}
+          </div>
+        </td>
         <td class="status-selection-header">
           <div class="status-selection">
             <label class="radio-status status-asistencia">
@@ -998,10 +1046,30 @@ async function saveAttendance() {
       
       const matricula = tds[0].textContent;
       const nombre = tds[1].querySelector("strong").textContent;
-      const radioInput = row.querySelector(`input[name="status_${matricula}"]:checked`);
       
+      const existingEntrada = row.getAttribute("data-entrada");
+      const existingSalida = row.getAttribute("data-salida");
+      const existingOrigen = row.getAttribute("data-origen");
+      
+      const radioInput = row.querySelector(`input[name="status_${matricula}"]:checked`);
       if (!radioInput) continue;
       const estado = radioInput.value; // "Asistencia", "Retardo", "Falta"
+      
+      let finalEntrada = existingEntrada;
+      let finalSalida = existingSalida;
+      let finalOrigen = existingOrigen || "Web Portal Maestro";
+      
+      if (estado === "Falta") {
+        finalEntrada = "";
+        finalSalida = "";
+        finalOrigen = "Web Portal Maestro";
+      } else {
+        // Si no tenía hora de entrada previa (o si era Falta), le asignamos la hora actual
+        if (!finalEntrada) {
+          finalEntrada = timeStr;
+          finalOrigen = "Web Portal Maestro";
+        }
+      }
       
       // 1. Guardar en 'asistencias_diarias' (ID unico: matricula_fecha)
       const docDiarioId = `${matricula}_${fecha}`;
@@ -1011,23 +1079,33 @@ async function saveAttendance() {
         matricula: matricula,
         nombre: nombre,
         fecha: fecha,
-        entrada: estado !== "Falta" ? timeStr : "",
-        salida: "",
+        entrada: finalEntrada,
+        salida: finalSalida,
         estado: estado,
-        origen: "Web Portal Maestro",
+        origen: finalOrigen,
         fechaSincronizacion: firebase.firestore.FieldValue.serverTimestamp()
       }, { merge: true });
       
-      // 2. Si el alumno asistió o tuvo retardo, añadir registro de transacción a 'asistencias' (sincronizado con app movil)
-      if (estado !== "Falta") {
+      // 2. Si el alumno asistió o tuvo retardo, y no tenía entrada previa, añadir registro a 'asistencias' (sincronizado con app movil)
+      if (estado !== "Falta" && !existingEntrada) {
         const zkId = `web_${matricula}_${fecha}_${timeStr.replace(/:/g, '')}`;
         const docRefTrans = db.collection("asistencias").doc(zkId);
+        
+        // Buscar grado/grupo del alumno en caché global si es posible
+        const cachedStudent = allStudents.find(s => s.matricula === matricula) || {};
         
         batch.set(docRefTrans, {
           zk_id: zkId,
           matricula: matricula,
-          fechaHora: `${fecha} ${timeStr}`,
+          matriculaAlumno: matricula,
           nombre: nombre,
+          nombreAlumno: nombre,
+          grado: cachedStudent.grado || (activeClass ? activeClass.gradoGrupo.substring(0, 1) : ""),
+          grupo: cachedStudent.grupo || (activeClass ? activeClass.gradoGrupo.substring(1) : ""),
+          fecha: fecha,
+          hora: finalEntrada,
+          tipoRegistro: "entrada",
+          fechaHora: `${fecha} ${finalEntrada}`,
           origen: "Web Portal Maestro",
           fechaSincronizacion: firebase.firestore.FieldValue.serverTimestamp()
         }, { merge: true });
@@ -1039,6 +1117,9 @@ async function saveAttendance() {
     statusMsg.className = "status-msg success";
     statusMsg.textContent = "¡Asistencia guardada exitosamente!";
     setTimeout(() => statusMsg.classList.add("hidden"), 3000);
+    
+    // Recargar tabla para reflejar los nuevos badges/datos guardados
+    loadClassStudentsForAttendance();
     
   } catch (error) {
     console.error("Error al guardar asistencias:", error);
@@ -1483,7 +1564,7 @@ let studentsDirectory = []; // Caché en memoria para filtros rápidos
 
 async function loadAdminStudentsList() {
   const tbody = document.getElementById("admin-students-table-body");
-  tbody.innerHTML = '<tr><td colspan="7" class="text-center">Cargando catálogo de alumnos...</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="8" class="text-center">Cargando catálogo de alumnos...</td></tr>';
   
   try {
     const snapshot = await db.collection("zktime_empleados").get();
@@ -1504,13 +1585,19 @@ async function loadAdminStudentsList() {
       });
     });
     
-    // Ordenar por nombre
-    studentsDirectory.sort((a, b) => a.nombre.localeCompare(b.nombre));
+    // Ordenar por grado/grupo, y luego por nombre alfabéticamente
+    studentsDirectory.sort((a, b) => {
+      const ggA = a.gradoGrupo || "";
+      const ggB = b.gradoGrupo || "";
+      const compGG = ggA.localeCompare(ggB);
+      if (compGG !== 0) return compGG;
+      return a.nombre.localeCompare(b.nombre);
+    });
     
     renderAdminStudentsTable(studentsDirectory);
   } catch (error) {
     console.error("Error al cargar estudiantes en panel admin:", error);
-    tbody.innerHTML = '<tr><td colspan="7" class="text-center error-message">Error de conexión al cargar la lista.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="8" class="text-center error-message">Error de conexión al cargar la lista.</td></tr>';
   }
 }
 
@@ -1518,7 +1605,7 @@ function renderAdminStudentsTable(list) {
   const tbody = document.getElementById("admin-students-table-body");
   
   if (list.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="7" class="text-center">No hay alumnos que coincidan con la búsqueda.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="8" class="text-center">No hay alumnos que coincidan con la búsqueda.</td></tr>';
     return;
   }
   
@@ -1551,28 +1638,68 @@ function renderAdminStudentsTable(list) {
         </span>
       </td>
       <td>${tutorHtml}</td>
+      <td>
+        <button type="button" class="btn btn-danger-outline" onclick="darDeBajaAlumno('${s.matricula}', '${s.nombre.replace(/'/g, "\\'")}')" title="Dar de baja alumno" style="padding: 6px 10px; font-size: 0.8rem; display: flex; align-items: center; gap: 4px;">
+          <i class="material-icons" style="font-size: 16px;">person_remove</i> Baja
+        </button>
+      </td>
     `;
     tbody.appendChild(tr);
   });
 }
 
 function filterAdminStudentsList() {
-  const filter = document.getElementById("students-search-filter").value.trim().toLowerCase();
+  const searchVal = document.getElementById("students-search-filter").value.trim().toLowerCase();
+  const groupVal = document.getElementById("students-filter-group") ? document.getElementById("students-filter-group").value : "";
   
-  if (!filter) {
-    renderAdminStudentsTable(studentsDirectory);
-    return;
+  let filtered = studentsDirectory;
+  
+  // Filtrar por grupo
+  if (groupVal) {
+    filtered = filtered.filter(s => s.gradoGrupo === groupVal);
   }
   
-  const filtered = studentsDirectory.filter(s => 
-    s.matricula.toLowerCase().includes(filter) ||
-    s.nombre.toLowerCase().includes(filter) ||
-    s.gradoGrupo.toLowerCase().includes(filter) ||
-    s.correo.toLowerCase().includes(filter)
-  );
+  // Filtrar por buscador
+  if (searchVal) {
+    filtered = filtered.filter(s => 
+      s.matricula.toLowerCase().includes(searchVal) ||
+      s.nombre.toLowerCase().includes(searchVal) ||
+      s.correo.toLowerCase().includes(searchVal)
+    );
+  }
   
   renderAdminStudentsTable(filtered);
 }
+
+// Dar de baja a un alumno de manera permanente
+async function darDeBajaAlumno(matricula, nombre) {
+  if (!confirm(`¿Estás seguro de que deseas dar de baja al alumno "${nombre}" con matrícula ${matricula}?\n\nEsta acción lo eliminará de forma permanente de la base de datos web y del biométrico ZKBioTime.`)) {
+    return;
+  }
+  
+  try {
+    // 1. Agregar a la colección de bajas_pendientes en Firestore
+    await db.collection("bajas_pendientes").doc(matricula).set({
+      matricula: matricula,
+      nombre: nombre,
+      fechaSolicitud: firebase.firestore.FieldValue.serverTimestamp(),
+      estado: "pendiente"
+    });
+    
+    alert(`Se ha solicitado la baja de ${nombre}. El biométrico y Firebase se sincronizarán en unos segundos.`);
+    
+    // Recargar la lista localmente quitándolo de la lista de visualización para dar feedback inmediato
+    studentsDirectory = studentsDirectory.filter(s => s.matricula !== matricula);
+    filterAdminStudentsList();
+    
+  } catch (error) {
+    console.error("Error al solicitar baja del alumno:", error);
+    alert("Error al solicitar la baja del alumno: " + error.message);
+  }
+}
+
+// Exponer la función globalmente
+window.darDeBajaAlumno = darDeBajaAlumno;
 
 // ==========================================================================
 // 8. MÓDULO DE ALERTAS ESCOLARES

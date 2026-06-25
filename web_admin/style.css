@@ -1299,3 +1299,22 @@ input[type="date"] {
   background-color: #059669;
 }
 
+.btn-danger-outline {
+  background-color: transparent;
+  border: 1.5px solid var(--color-danger);
+  color: var(--color-danger);
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: var(--transition);
+  font-weight: 500;
+}
+
+.btn-danger-outline:hover {
+  background-color: var(--color-danger);
+  color: white;
+}
+
