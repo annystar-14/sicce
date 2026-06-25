@@ -442,6 +442,8 @@ def sincronizar_once(db):
 
         print(f"Empleados encontrados: {len(empleados)}")
 
+        # Conjunto de matrículas activas en ZKBioTime (para detectar bajas)
+        matriculas_activas_zk = set()
         for e in empleados:
             empleado_id_raw = e[0]
             empleado_id = limpiar(empleado_id_raw)
@@ -462,6 +464,8 @@ def sincronizar_once(db):
 
             if not matricula:
                 continue
+
+            matriculas_activas_zk.add(matricula)
 
             doc_ref = db.collection("zktime_empleados").document(matricula)
             doc = doc_ref.get()
@@ -501,6 +505,21 @@ def sincronizar_once(db):
                 doc_ref.set(datos_empleado)
 
             escribir_log(f"Alumno sincronizado: {matricula} - {nombre_completo} (Huella: {estado_huella})")
+
+        # =========================
+        # BAJAS POR ELIMINACIÓN EN ZKBIOTIME
+        # =========================
+        # Detectar alumnos en Firestore que ya no existen en ZKBioTime y eliminarlos
+        try:
+            docs_firestore = db.collection("zktime_empleados").get()
+            for doc_fs in docs_firestore:
+                mat_fs = doc_fs.id
+                if mat_fs not in matriculas_activas_zk:
+                    doc_fs.reference.delete()
+                    escribir_log(f"Alumno eliminado de Firestore (baja automática): {mat_fs}")
+                    print(f"Alumno eliminado de Firestore por baja en ZKBioTime: {mat_fs}")
+        except Exception as e_bajas:
+            escribir_log(f"Error al sincronizar bajas automáticas: {e_bajas}")
 
         # =========================
         # ASISTENCIAS / MARCACIONES
