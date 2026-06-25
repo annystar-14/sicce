@@ -10,8 +10,10 @@ let currentTeacherUid = null; // Para gestionar asignaciones
 let activeClass = null; // Clase seleccionada por el maestro { gradoGrupo, materia }
 let allStudents = []; // Cache para el buscador individual
 let allGroups = []; // Cache de todos los grupos únicos
-let pendingAlerts = []; // Cache de alertas pendientes en memoria
 let alertsListenerUnsubscribe = null;
+let adminMb160Unsubscribe = null;
+let teacherMb160Unsubscribe = null;
+let teacherDailyAttendanceUnsubscribe = null;
 
 // Inicialización
 document.addEventListener("DOMContentLoaded", () => {
@@ -67,6 +69,23 @@ function setupAuthListener() {
       currentUser = null;
       currentUserRole = null;
       activeClass = null;
+      
+      if (alertsListenerUnsubscribe) {
+        alertsListenerUnsubscribe();
+        alertsListenerUnsubscribe = null;
+      }
+      if (adminMb160Unsubscribe) {
+        adminMb160Unsubscribe();
+        adminMb160Unsubscribe = null;
+      }
+      if (teacherMb160Unsubscribe) {
+        teacherMb160Unsubscribe();
+        teacherMb160Unsubscribe = null;
+      }
+      if (teacherDailyAttendanceUnsubscribe) {
+        teacherDailyAttendanceUnsubscribe();
+        teacherDailyAttendanceUnsubscribe = null;
+      }
       
       // Mostrar login y ocultar dashboard
       loginContainer.classList.remove("hidden");
@@ -207,12 +226,27 @@ function setupUIEventListeners() {
   document.getElementById("btn-back-to-classes").addEventListener("click", () => {
     document.getElementById("view-take-attendance").classList.add("hidden");
     document.getElementById("tab-teacher-dashboard").classList.remove("hidden");
+    
+    if (teacherMb160Unsubscribe) {
+      teacherMb160Unsubscribe();
+      teacherMb160Unsubscribe = null;
+    }
+    if (teacherDailyAttendanceUnsubscribe) {
+      teacherDailyAttendanceUnsubscribe();
+      teacherDailyAttendanceUnsubscribe = null;
+    }
+    
     loadTeacherDashboard();
   });
   
   document.getElementById("attendance-date").addEventListener("change", () => {
     if (activeClass) {
-      loadClassStudentsForAttendance();
+      const btnModeMb160 = document.getElementById("btn-mode-mb160");
+      if (btnModeMb160 && btnModeMb160.classList.contains("active")) {
+        loadTeacherMb160Attendance();
+      } else {
+        loadClassStudentsForAttendance();
+      }
     }
   });
   
@@ -251,6 +285,14 @@ function setupUIEventListeners() {
   if (btnFilterMb160) {
     btnFilterMb160.addEventListener("click", loadAdminMb160Attendance);
   }
+  const mb160FilterDate = document.getElementById("mb160-filter-date");
+  if (mb160FilterDate) {
+    mb160FilterDate.addEventListener("change", loadAdminMb160Attendance);
+  }
+  const mb160FilterGroup = document.getElementById("mb160-filter-group");
+  if (mb160FilterGroup) {
+    mb160FilterGroup.addEventListener("change", loadAdminMb160Attendance);
+  }
   const btnPrintMb160 = document.getElementById("btn-print-mb160");
   if (btnPrintMb160) {
     btnPrintMb160.addEventListener("click", () => window.print());
@@ -281,6 +323,14 @@ function setupUIEventListeners() {
 }
 
 function switchTab(tabId) {
+  // Limpiar escuchador de MB160 de admin si se cambia de pestaña
+  if (tabId !== "admin-mb160-attendance") {
+    if (adminMb160Unsubscribe) {
+      adminMb160Unsubscribe();
+      adminMb160Unsubscribe = null;
+    }
+  }
+
   // Ocultar todas las pestañas
   document.querySelectorAll(".tab-pane").forEach(pane => pane.classList.add("hidden"));
   document.getElementById("view-take-attendance").classList.add("hidden");
@@ -908,7 +958,12 @@ function toggleAttendanceMode(mode) {
 }
 
 // Cargar lista diaria de alumnos para tomar asistencia
-async function loadClassStudentsForAttendance() {
+function loadClassStudentsForAttendance() {
+  if (teacherDailyAttendanceUnsubscribe) {
+    teacherDailyAttendanceUnsubscribe();
+    teacherDailyAttendanceUnsubscribe = null;
+  }
+
   const tbody = document.getElementById("attendance-students-body");
   tbody.innerHTML = '<tr><td colspan="3" class="text-center">Cargando alumnos...</td></tr>';
   
@@ -917,106 +972,114 @@ async function loadClassStudentsForAttendance() {
   
   try {
     // 1. Obtener alumnos en este salón
-    const studentSnapshot = await db.collection("zktime_empleados").where("gradoGrupo", "==", activeClass.gradoGrupo).get();
-    
-    if (studentSnapshot.empty) {
-      tbody.innerHTML = '<tr><td colspan="3" class="text-center">No hay alumnos asignados a este grupo en el biométrico.</td></tr>';
-      return;
-    }
-    
-    // 2. Obtener asistencias ya guardadas para este salón y esta fecha
-    const attendanceSnapshot = await db.collection("asistencias_diarias")
-      .where("fecha", "==", fecha)
-      .get();
-      
-    const savedRecords = {};
-    attendanceSnapshot.forEach(doc => {
-      const data = doc.data();
-      savedRecords[data.matricula] = data; // Guardamos el registro completo
-    });
-    
-    // 3. Renderizar la tabla de alumnos
-    tbody.innerHTML = "";
-    
-    // Guardar estudiantes de forma ordenada por nombre
-    const students = [];
-    studentSnapshot.forEach(doc => {
-      students.push(doc.data());
-    });
-    students.sort((a, b) => {
-      const nameA = a.nombreCompleto || `${a.nombre} ${a.apellidos}`;
-      const nameB = b.nombreCompleto || `${b.nombre} ${b.apellidos}`;
-      return nameA.localeCompare(nameB);
-    });
-    
-    students.forEach(student => {
-      const matricula = student.matricula;
-      const name = student.nombreCompleto || `${student.nombre} ${student.apellidos}`;
-      
-      // Obtener el registro preexistente si lo hay
-      const savedRecord = savedRecords[matricula];
-      // Por defecto si no tiene registro, el estado es "Falta"
-      const estadoActual = savedRecord ? savedRecord.estado : "Falta";
-      
-      // Construir badge con hora y origen si existe
-      let infoBadge = "";
-      if (savedRecord && savedRecord.entrada) {
-        const timeFmt = savedRecord.entrada.substring(0, 5); // HH:MM
-        const esBio = (savedRecord.origen || "").toLowerCase().includes("biom") || (savedRecord.origen || "").includes("MB160");
-        const icon = esBio ? "fingerprint" : "language";
-        const label = esBio ? "Biométrico" : "Portal";
-        const badgeColor = esBio 
-          ? "background-color: rgba(16, 185, 129, 0.1); color: var(--color-success); border: 1px solid rgba(16, 185, 129, 0.2);" 
-          : "background-color: rgba(30, 64, 175, 0.1); color: var(--color-primary); border: 1px solid rgba(30, 64, 175, 0.2);";
+    db.collection("zktime_empleados").where("gradoGrupo", "==", activeClass.gradoGrupo).get()
+      .then((studentSnapshot) => {
+        if (studentSnapshot.empty) {
+          tbody.innerHTML = '<tr><td colspan="3" class="text-center">No hay alumnos asignados a este grupo en el biométrico.</td></tr>';
+          return;
+        }
         
-        infoBadge = `
-          <div style="margin-top: 4px; display: inline-flex; align-items: center; gap: 4px; font-size: 0.75rem; padding: 2px 6px; border-radius: 4px; ${badgeColor}">
-            <i class="material-icons" style="font-size: 12px;">${icon}</i>
-            <span>${label}: ${timeFmt}</span>
-          </div>
-        `;
-      }
-      
-      const tr = document.createElement("tr");
-      // Almacenar valores originales para preservarlos en el guardado
-      tr.setAttribute("data-entrada", savedRecord ? (savedRecord.entrada || "") : "");
-      tr.setAttribute("data-salida", savedRecord ? (savedRecord.salida || "") : "");
-      tr.setAttribute("data-origen", savedRecord ? (savedRecord.origen || "") : "");
-      
-      tr.innerHTML = `
-        <td>${matricula}</td>
-        <td>
-          <div style="display: flex; flex-direction: column;">
-            <strong>${name}</strong>
-            ${infoBadge}
-          </div>
-        </td>
-        <td class="status-selection-header">
-          <div class="status-selection">
-            <label class="radio-status status-asistencia">
-              <input type="radio" name="status_${matricula}" value="Asistencia" ${estadoActual === "Asistencia" ? "checked" : ""}>
-              <span>Asistencia</span>
-            </label>
-            <label class="radio-status status-retardo">
-              <input type="radio" name="status_${matricula}" value="Retardo" ${estadoActual === "Retardo" ? "checked" : ""}>
-              <span>Retardo</span>
-            </label>
-            <label class="radio-status status-falta">
-              <input type="radio" name="status_${matricula}" value="Falta" ${estadoActual === "Falta" ? "checked" : ""}>
-              <span>Falta</span>
-            </label>
-          </div>
-        </td>
-        <td style="text-align: center;">
-          <button type="button" class="btn btn-warning-outline" onclick="openReportStudentModal('${matricula}', '${name.replace(/'/g, "\\'")}', '${student.grado || ""}', '${student.grupo || ""}')" title="Reportar alumno con faltas">
-            <i class="material-icons" style="font-size: 18px;">report_problem</i>
-          </button>
-        </td>
-      `;
-      tbody.appendChild(tr);
-    });
+        // Guardar estudiantes de forma ordenada por nombre
+        const students = [];
+        studentSnapshot.forEach(doc => {
+          students.push(doc.data());
+        });
+        students.sort((a, b) => {
+          const nameA = a.nombreCompleto || `${a.nombre} ${a.apellidos}`;
+          const nameB = b.nombreCompleto || `${b.nombre} ${b.apellidos}`;
+          return nameA.localeCompare(nameB);
+        });
+
+        // 2. Escuchar asistencias en tiempo real
+        teacherDailyAttendanceUnsubscribe = db.collection("asistencias_diarias")
+          .where("fecha", "==", fecha)
+          .onSnapshot((attendanceSnapshot) => {
+            const savedRecords = {};
+            attendanceSnapshot.forEach(doc => {
+              const data = doc.data();
+              savedRecords[data.matricula] = data; // Guardamos el registro completo
+            });
+            
+            // 3. Renderizar la tabla de alumnos
+            tbody.innerHTML = "";
+            
+            students.forEach(student => {
+              const matricula = student.matricula;
+              const name = student.nombreCompleto || `${student.nombre} ${student.apellidos}`;
+              
+              // Obtener el registro preexistente si lo hay
+              const savedRecord = savedRecords[matricula];
+              // Por defecto si no tiene registro, el estado es "Falta"
+              const estadoActual = savedRecord ? savedRecord.estado : "Falta";
+              
+              // Construir badge con hora y origen si existe
+              let infoBadge = "";
+              if (savedRecord && savedRecord.entrada) {
+                const timeFmt = savedRecord.entrada.substring(0, 5); // HH:MM
+                const esBio = (savedRecord.origen || "").toLowerCase().includes("biom") || (savedRecord.origen || "").includes("MB160");
+                const icon = esBio ? "fingerprint" : "language";
+                const label = esBio ? "Biométrico" : "Portal";
+                const badgeColor = esBio 
+                  ? "background-color: rgba(16, 185, 129, 0.1); color: var(--color-success); border: 1px solid rgba(16, 185, 129, 0.2);" 
+                  : "background-color: rgba(30, 64, 175, 0.1); color: var(--color-primary); border: 1px solid rgba(30, 64, 175, 0.2);";
+                
+                infoBadge = `
+                  <div style="margin-top: 4px; display: inline-flex; align-items: center; gap: 4px; font-size: 0.75rem; padding: 2px 6px; border-radius: 4px; ${badgeColor}">
+                    <i class="material-icons" style="font-size: 12px;">${icon}</i>
+                    <span>${label}: ${timeFmt}</span>
+                  </div>
+                `;
+              }
+              
+              const tr = document.createElement("tr");
+              // Almacenar valores originales para preservarlos en el guardado
+              tr.setAttribute("data-entrada", savedRecord ? (savedRecord.entrada || "") : "");
+              tr.setAttribute("data-salida", savedRecord ? (savedRecord.salida || "") : "");
+              tr.setAttribute("data-origen", savedRecord ? (savedRecord.origen || "") : "");
+              
+              tr.innerHTML = `
+                <td>${matricula}</td>
+                <td>
+                  <div style="display: flex; flex-direction: column;">
+                    <strong>${name}</strong>
+                    ${infoBadge}
+                  </div>
+                </td>
+                <td class="status-selection-header">
+                  <div class="status-selection">
+                    <label class="radio-status status-asistencia">
+                      <input type="radio" name="status_${matricula}" value="Asistencia" ${estadoActual === "Asistencia" ? "checked" : ""}>
+                      <span>Asistencia</span>
+                    </label>
+                    <label class="radio-status status-retardo">
+                      <input type="radio" name="status_${matricula}" value="Retardo" ${estadoActual === "Retardo" ? "checked" : ""}>
+                      <span>Retardo</span>
+                    </label>
+                    <label class="radio-status status-falta">
+                      <input type="radio" name="status_${matricula}" value="Falta" ${estadoActual === "Falta" ? "checked" : ""}>
+                      <span>Falta</span>
+                    </label>
+                  </div>
+                </td>
+                <td style="text-align: center;">
+                  <button type="button" class="btn btn-warning-outline" onclick="openReportStudentModal('${matricula}', '${name.replace(/'/g, "\\'")}', '${student.grado || ""}', '${student.grupo || ""}')" title="Reportar alumno con faltas">
+                    <i class="material-icons" style="font-size: 18px;">report_problem</i>
+                  </button>
+                </td>
+              `;
+              tbody.appendChild(tr);
+            });
+          }, (error) => {
+            console.error("Error al escuchar lista de asistencia diaria:", error);
+            tbody.innerHTML = '<tr><td colspan="3" class="text-center error-message">Error al cargar la lista de alumnos.</td></tr>';
+          });
+      })
+      .catch((error) => {
+        console.error("Error al obtener alumnos de la clase:", error);
+        tbody.innerHTML = '<tr><td colspan="3" class="text-center error-message">Error al cargar la lista de alumnos.</td></tr>';
+      });
   } catch (error) {
-    console.error("Error al cargar lista de asistencia diaria:", error);
+    console.error("Error al iniciar listener de asistencia diaria:", error);
     tbody.innerHTML = '<tr><td colspan="3" class="text-center error-message">Error al cargar la lista de alumnos.</td></tr>';
   }
 }
@@ -2120,7 +2183,12 @@ async function handleMarkAlertAtendida() {
 // 9. REPORTE Y CONSULTA DE ASISTENCIAS MB160 (ADMIN & MAESTRO)
 // ==========================================================================
 
-async function loadAdminMb160Attendance() {
+function loadAdminMb160Attendance() {
+  if (adminMb160Unsubscribe) {
+    adminMb160Unsubscribe();
+    adminMb160Unsubscribe = null;
+  }
+
   const tbody = document.getElementById("mb160-attendance-tbody");
   if (!tbody) return;
   tbody.innerHTML = '<tr><td colspan="6" class="text-center">Cargando marcaciones...</td></tr>';
@@ -2129,71 +2197,79 @@ async function loadAdminMb160Attendance() {
   const groupVal = document.getElementById("mb160-filter-group").value;
   
   try {
-    const snapshot = await db.collection("asistencias")
+    adminMb160Unsubscribe = db.collection("asistencias")
       .where("fecha", "==", dateVal)
-      .get();
-      
-    if (snapshot.empty) {
-      tbody.innerHTML = '<tr><td colspan="6" class="text-center">No hay registros de asistencias para esta fecha.</td></tr>';
-      return;
-    }
-    
-    // Mapear alumnos para filtrar en memoria por grupo y obtener su información
-    const studentMap = {};
-    allStudents.forEach(s => {
-      studentMap[s.matricula] = s;
-    });
-    
-    const records = [];
-    snapshot.forEach(doc => {
-      records.push(doc.data());
-    });
-    
-    // Ordenar por fechaHora desc
-    records.sort((a, b) => b.fechaHora.localeCompare(a.fechaHora));
-    
-    tbody.innerHTML = "";
-    let renderedCount = 0;
-    
-    records.forEach(r => {
-      const student = studentMap[r.matricula];
-      const studentGradoGrupo = student ? student.gradoGrupo : (r.grado && r.grupo ? `${r.grado}${r.grupo}` : "N/A");
-      
-      // Filtrar por grupo si se seleccionó uno
-      if (groupVal && studentGradoGrupo !== groupVal) {
-        return;
-      }
-      
-      renderedCount++;
-      const tr = document.createElement("tr");
-      
-      // Formatear tipo de registro
-      const tipo = r.tipoRegistro || "entrada";
-      const tipoBadge = tipo === "entrada"
-        ? `<span class="badge" style="background-color:rgba(16,185,129,0.1); color:var(--color-success)">Entrada</span>`
-        : `<span class="badge" style="background-color:rgba(245,158,11,0.1); color:var(--color-warning)">Salida</span>`;
+      .onSnapshot((snapshot) => {
+        if (snapshot.empty) {
+          tbody.innerHTML = '<tr><td colspan="6" class="text-center">No hay registros de asistencias para esta fecha.</td></tr>';
+          return;
+        }
         
-      tr.innerHTML = `
-        <td><strong>${formatDateToShow(r.fecha)} ${r.hora || ""}</strong></td>
-        <td>${r.matricula}</td>
-        <td><strong>${r.nombreAlumno || r.nombre}</strong></td>
-        <td><span class="badge badge-teacher">${studentGradoGrupo}</span></td>
-        <td>${tipoBadge}</td>
-        <td style="color:#64748b; font-size:0.8rem;">${r.origen || "MB160"}</td>
-      `;
-      tbody.appendChild(tr);
-    });
-    
-    if (renderedCount === 0) {
-      tbody.innerHTML = '<tr><td colspan="6" class="text-center">No hay registros de asistencia para el grupo seleccionado en esta fecha.</td></tr>';
-    }
+        // Mapear alumnos para filtrar en memoria por grupo y obtener su información
+        const studentMap = {};
+        allStudents.forEach(s => {
+          studentMap[s.matricula] = s;
+        });
+        
+        const records = [];
+        snapshot.forEach(doc => {
+          records.push(doc.data());
+        });
+        
+        // Ordenar por fechaHora desc
+        records.sort((a, b) => b.fechaHora.localeCompare(a.fechaHora));
+        
+        tbody.innerHTML = "";
+        let renderedCount = 0;
+        
+        records.forEach(r => {
+          const student = studentMap[r.matricula];
+          const studentGradoGrupo = student ? student.gradoGrupo : (r.grado && r.grupo ? `${r.grado}${r.grupo}` : "N/A");
+          
+          // Filtrar por grupo si se seleccionó uno
+          if (groupVal && studentGradoGrupo !== groupVal) {
+            return;
+          }
+          
+          renderedCount++;
+          const tr = document.createElement("tr");
+          
+          // Formatear tipo de registro
+          const tipo = r.tipoRegistro || "entrada";
+          const tipoBadge = tipo === "entrada"
+            ? `<span class="badge" style="background-color:rgba(16,185,129,0.1); color:var(--color-success)">Entrada</span>`
+            : `<span class="badge" style="background-color:rgba(245,158,11,0.1); color:var(--color-warning)">Salida</span>`;
+            
+          tr.innerHTML = `
+            <td><strong>${formatDateToShow(r.fecha)} ${r.hora || ""}</strong></td>
+            <td>${r.matricula}</td>
+            <td><strong>${r.nombreAlumno || r.nombre}</strong></td>
+            <td><span class="badge badge-teacher">${studentGradoGrupo}</span></td>
+            <td>${tipoBadge}</td>
+            <td style="color:#64748b; font-size:0.8rem;">${r.origen || "MB160"}</td>
+          `;
+          tbody.appendChild(tr);
+        });
+        
+        if (renderedCount === 0) {
+          tbody.innerHTML = '<tr><td colspan="6" class="text-center">No hay registros de asistencia para el grupo seleccionado en esta fecha.</td></tr>';
+        }
+      }, (error) => {
+        console.error("Error al cargar asistencias admin MB160:", error);
+        tbody.innerHTML = '<tr><td colspan="6" class="text-center error-message">Error al consultar base de datos.</td></tr>';
+      });
   } catch (error) {
-    console.error("Error al cargar asistencias admin MB160:", error);
-    tbody.innerHTML = '<tr><td colspan="6" class="text-center error-message">Error al consultar base de datos.</td></tr>';
+    console.error("Error al iniciar listener de asistencias admin MB160:", error);
+    tbody.innerHTML = '<tr><td colspan="6" class="text-center error-message">Error de conexión.</td></tr>';
   }
 }
 
-async function loadTeacherMb160Attendance() {
+function loadTeacherMb160Attendance() {
+  if (teacherMb160Unsubscribe) {
+    teacherMb160Unsubscribe();
+    teacherMb160Unsubscribe = null;
+  }
+
   const tbody = document.getElementById("teacher-mb160-tbody");
   if (!tbody) return;
   tbody.innerHTML = '<tr><td colspan="5" class="text-center">Cargando marcaciones...</td></tr>';
@@ -2203,61 +2279,69 @@ async function loadTeacherMb160Attendance() {
   
   try {
     // 1. Obtener alumnos en este salón
-    const studentSnapshot = await db.collection("zktime_empleados").where("gradoGrupo", "==", activeClass.gradoGrupo).get();
-    
-    if (studentSnapshot.empty) {
-      tbody.innerHTML = '<tr><td colspan="5" class="text-center">No hay alumnos asignados a este grupo.</td></tr>';
-      return;
-    }
-    
-    const studentMatriculas = new Set();
-    const studentMap = {};
-    studentSnapshot.forEach(doc => {
-      const data = doc.data();
-      studentMatriculas.add(data.matricula);
-      studentMap[data.matricula] = data.nombreCompleto || `${data.nombre} ${data.apellidos}`;
-    });
-    
-    // 2. Obtener asistencias para este día
-    const snapshot = await db.collection("asistencias")
-      .where("fecha", "==", fecha)
-      .get();
-      
-    const records = [];
-    snapshot.forEach(doc => {
-      const data = doc.data();
-      if (studentMatriculas.has(data.matricula)) {
-        records.push(data);
-      }
-    });
-    
-    // Ordenar por fechaHora desc
-    records.sort((a, b) => b.fechaHora.localeCompare(a.fechaHora));
-    
-    tbody.innerHTML = "";
-    if (records.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="5" class="text-center">No hay marcaciones biométricas registradas para este grupo en esta fecha.</td></tr>';
-      return;
-    }
-    
-    records.forEach(r => {
-      const tr = document.createElement("tr");
-      const tipo = r.tipoRegistro || "entrada";
-      const tipoBadge = tipo === "entrada"
-        ? `<span class="badge" style="background-color:rgba(16,185,129,0.1); color:var(--color-success)">Entrada</span>`
-        : `<span class="badge" style="background-color:rgba(245,158,11,0.1); color:var(--color-warning)">Salida</span>`;
+    db.collection("zktime_empleados").where("gradoGrupo", "==", activeClass.gradoGrupo).get()
+      .then((studentSnapshot) => {
+        if (studentSnapshot.empty) {
+          tbody.innerHTML = '<tr><td colspan="5" class="text-center">No hay alumnos asignados a este grupo.</td></tr>';
+          return;
+        }
         
-      tr.innerHTML = `
-        <td><strong>${formatDateToShow(r.fecha)} ${r.hora || ""}</strong></td>
-        <td>${r.matricula}</td>
-        <td><strong>${studentMap[r.matricula] || r.nombre}</strong></td>
-        <td>${tipoBadge}</td>
-        <td style="color:#64748b; font-size:0.8rem;">${r.origen || "MB160"}</td>
-      `;
-      tbody.appendChild(tr);
-    });
+        const studentMatriculas = new Set();
+        const studentMap = {};
+        studentSnapshot.forEach(doc => {
+          const data = doc.data();
+          studentMatriculas.add(data.matricula);
+          studentMap[data.matricula] = data.nombreCompleto || `${data.nombre} ${data.apellidos}`;
+        });
+        
+        // 2. Escuchar asistencias en tiempo real
+        teacherMb160Unsubscribe = db.collection("asistencias")
+          .where("fecha", "==", fecha)
+          .onSnapshot((snapshot) => {
+            const records = [];
+            snapshot.forEach(doc => {
+              const data = doc.data();
+              if (studentMatriculas.has(data.matricula)) {
+                records.push(data);
+              }
+            });
+            
+            // Ordenar por fechaHora desc
+            records.sort((a, b) => b.fechaHora.localeCompare(a.fechaHora));
+            
+            tbody.innerHTML = "";
+            if (records.length === 0) {
+              tbody.innerHTML = '<tr><td colspan="5" class="text-center">No hay marcaciones biométricas registradas para este grupo en esta fecha.</td></tr>';
+              return;
+            }
+            
+            records.forEach(r => {
+              const tr = document.createElement("tr");
+              const tipo = r.tipoRegistro || "entrada";
+              const tipoBadge = tipo === "entrada"
+                ? `<span class="badge" style="background-color:rgba(16,185,129,0.1); color:var(--color-success)">Entrada</span>`
+                : `<span class="badge" style="background-color:rgba(245,158,11,0.1); color:var(--color-warning)">Salida</span>`;
+                
+              tr.innerHTML = `
+                <td><strong>${formatDateToShow(r.fecha)} ${r.hora || ""}</strong></td>
+                <td>${r.matricula}</td>
+                <td><strong>${studentMap[r.matricula] || r.nombre}</strong></td>
+                <td>${tipoBadge}</td>
+                <td style="color:#64748b; font-size:0.8rem;">${r.origen || "MB160"}</td>
+              `;
+              tbody.appendChild(tr);
+            });
+          }, (error) => {
+            console.error("Error al cargar asistencias teacher MB160:", error);
+            tbody.innerHTML = '<tr><td colspan="5" class="text-center error-message">Error al cargar marcaciones.</td></tr>';
+          });
+      })
+      .catch((error) => {
+        console.error("Error al obtener alumnos para teacher MB160:", error);
+        tbody.innerHTML = '<tr><td colspan="5" class="text-center error-message">Error al cargar marcaciones.</td></tr>';
+      });
   } catch (error) {
-    console.error("Error al cargar asistencias teacher MB160:", error);
+    console.error("Error crítico al inicializar asistencias teacher MB160:", error);
     tbody.innerHTML = '<tr><td colspan="5" class="text-center error-message">Error al cargar marcaciones.</td></tr>';
   }
 }

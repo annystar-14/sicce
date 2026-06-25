@@ -104,6 +104,8 @@ def formatear_fecha_hora(valor):
         return ""
 
     if isinstance(valor, datetime):
+        if valor.tzinfo is not None:
+            valor = valor.astimezone()
         return valor.strftime("%Y-%m-%d %H:%M:%S")
 
     return str(valor).strip()
@@ -646,4 +648,4 @@ if __name__ == "__main__":
             print(f"Error crítico en el bucle principal: {e}")
             escribir_log(f"CRITICAL LOOP ERROR: {e}")
         
-        time.sleep(30)
+        time.sleep(5)
