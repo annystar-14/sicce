@@ -18,12 +18,13 @@ class AsistenciaViewModel extends ChangeNotifier {
       final query = await FirebaseFirestore.instance
           .collection('asistencias_diarias')
           .where('matricula', isEqualTo: matricula)
-          .orderBy('fecha', descending: true)
           .get();
 
       asistencias = query.docs
           .map((doc) => Asistencia.fromMap(doc.data()))
           .toList();
+
+      asistencias.sort((a, b) => b.fecha.compareTo(a.fecha));
 
       isLoading = false;
       notifyListeners();

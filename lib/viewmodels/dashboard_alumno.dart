@@ -14,6 +14,7 @@ class DashboardAlumnoViewModel extends ChangeNotifier {
   int _faltasCount = 0;
 
   List<Asistencia> _historial = [];
+  Map<String, Map<String, dynamic>> _calendarioEvents = {};
 
   Alumno? get alumno => _alumno;
   Asistencia? get todayAsistencia => _todayAsistencia;
@@ -24,6 +25,7 @@ class DashboardAlumnoViewModel extends ChangeNotifier {
   int get faltasCount => _faltasCount;
 
   List<Asistencia> get historial => _historial;
+  Map<String, Map<String, dynamic>> get calendarioEvents => _calendarioEvents;
 
   void setAlumno(Alumno al) {
     _alumno = al;
@@ -51,10 +53,23 @@ class DashboardAlumnoViewModel extends ChangeNotifier {
       final fechaHoy = _getFechaHoy();
       final mesActual = _getMesActual();
 
+      // Cargar eventos del calendario escolar
+      final calSnapshot = await FirebaseFirestore.instance
+          .collection('calendario')
+          .get();
+      
+      _calendarioEvents = {};
+      for (var doc in calSnapshot.docs) {
+        final data = doc.data();
+        final fecha = data['fecha']?.toString();
+        if (fecha != null) {
+          _calendarioEvents[fecha] = data;
+        }
+      }
+
       final querySnapshot = await FirebaseFirestore.instance
           .collection('asistencias_diarias')
           .where('matricula', isEqualTo: matricula)
-          .orderBy('fecha', descending: true)
           .get();
 
       _historial = [];
@@ -64,11 +79,14 @@ class DashboardAlumnoViewModel extends ChangeNotifier {
       _retardosCount = 0;
       _faltasCount = 0;
 
-      for (var doc in querySnapshot.docs) {
-        final asistencia = Asistencia.fromMap(doc.data());
+      final list = querySnapshot.docs
+          .map((doc) => Asistencia.fromMap(doc.data()))
+          .toList();
 
-        _historial.add(asistencia);
+      list.sort((a, b) => b.fecha.compareTo(a.fecha));
+      _historial = list;
 
+      for (var asistencia in _historial) {
         if (asistencia.fecha == fechaHoy) {
           _todayAsistencia = asistencia;
         }

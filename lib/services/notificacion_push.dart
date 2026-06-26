@@ -23,8 +23,8 @@ class NotificacionPushService {
   static Future<void> mostrarNotificacion(RemoteMessage message) async {
     const AndroidNotificationDetails androidDetails =
         AndroidNotificationDetails(
-      'sicce_channel',
-      'Notificaciones SICCE',
+      'asistencia_sicce',
+      'Control de Asistencia',
       channelDescription: 'Notificaciones de entrada y salida de alumnos',
       importance: Importance.max,
       priority: Priority.high,

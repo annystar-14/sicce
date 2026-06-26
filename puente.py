@@ -1,14 +1,34 @@
 import os
+import sys
+import socket
 import traceback
+import time
 from datetime import datetime
 
 import psycopg2
 import firebase_admin
 from firebase_admin import credentials, firestore, messaging
 
+_lock_socket = None
 
-FIREBASE_KEY = r"C:\Users\laraa\proyectsAS\app_sicce\sicce-2026-firebase-adminsdk-fbsvc-6b52c7221c.json"
 
+def evitar_multiples_instancias():
+    global _lock_socket
+    try:
+        _lock_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        _lock_socket.bind(('127.0.0.1', 49999))
+    except socket.error:
+        print("Ya hay una instancia de puente.py ejecutándose en segundo plano. Saliendo de esta instancia repetida.")
+        sys.exit(0)
+
+
+# =========================
+# CONFIGURACIÓN
+# =========================
+
+FIREBASE_KEY = r"D:\proyectohuellacobach\sicce\sicce-2026-firebase-adminsdk-fbsvc-6b52c7221c.json"
+
+# ZKBioTime local
 POSTGRES_HOST = "127.0.0.1"
 POSTGRES_PORT = 7496
 POSTGRES_DB = "biotime"
@@ -16,6 +36,56 @@ POSTGRES_USER = "postgres"
 POSTGRES_PASSWORD = ""
 
 LOG_FILE = "sync_zkbiotime.log"
+
+
+# =========================
+# FUNCIONES
+# =========================
+
+STATE_FILE = r"D:\proyectohuellacobach\sicce\puente_state.txt"
+
+
+def obtener_ultimo_id():
+    if os.path.exists(STATE_FILE):
+        try:
+            with open(STATE_FILE, "r", encoding="utf-8") as f:
+                content = f.read().strip()
+                if content:
+                    return int(content)
+        except Exception as e:
+            escribir_log(f"Error al leer archivo de estado: {e}")
+    return None
+
+
+def guardar_ultimo_id(last_id):
+    try:
+        with open(STATE_FILE, "w", encoding="utf-8") as f:
+            f.write(str(last_id))
+    except Exception as e:
+        escribir_log(f"Error al guardar último ID en archivo de estado: {e}")
+
+
+def obtener_max_id_db():
+    conexion = None
+    try:
+        conexion = psycopg2.connect(
+            host=POSTGRES_HOST,
+            port=POSTGRES_PORT,
+            database=POSTGRES_DB,
+            user=POSTGRES_USER,
+            password=POSTGRES_PASSWORD
+        )
+        cursor = conexion.cursor()
+        cursor.execute("SELECT MAX(id) FROM iclock_transaction")
+        res = cursor.fetchone()
+        if res and res[0] is not None:
+            return int(res[0])
+    except Exception as e:
+        escribir_log(f"Error al obtener ID máximo de la base de datos: {e}")
+    finally:
+        if conexion:
+            conexion.close()
+    return 0
 
 
 def escribir_log(mensaje):
@@ -32,8 +102,12 @@ def limpiar(valor):
 def formatear_fecha_hora(valor):
     if valor is None:
         return ""
+
     if isinstance(valor, datetime):
+        if valor.tzinfo is not None:
+            valor = valor.astimezone()
         return valor.strftime("%Y-%m-%d %H:%M:%S")
+
     return str(valor).strip()
 
 
@@ -66,69 +140,88 @@ def convertir_sexo(valor):
         return ""
 
 
-def enviar_notificacion_padre(db, matricula, nombre, fecha_hora, tipo):
+def enviar_notificacion_padre(db, matricula, nombre, fecha, hora, tipo_registro):
+    """
+    Busca el fcmToken del padre vinculado al alumno y le envía
+    una notificación push vía Firebase Cloud Messaging.
+    También la registra en la subcolección de notificaciones de Firestore.
+    """
     try:
+        # 1. Obtener padreId del alumno
         alumno_doc = db.collection("zktime_empleados").document(matricula).get()
-
         if not alumno_doc.exists:
-            escribir_log(f"No existe alumno con matrícula {matricula}")
             return
 
-        alumno = alumno_doc.to_dict()
-        padre_id = alumno.get("padreId", "")
-
+        padre_id = alumno_doc.to_dict().get("padreId", "")
         if not padre_id:
-            escribir_log(f"Alumno {matricula} no tiene padreId")
-            return
+            return  # Alumno sin tutor vinculado
 
+        # 2. Obtener token FCM del padre
         padre_doc = db.collection("usuarios").document(padre_id).get()
-
         if not padre_doc.exists:
-            escribir_log(f"No existe padre {padre_id}")
             return
 
-        padre = padre_doc.to_dict()
-        token = padre.get("fcmToken", "")
+        fcm_token = padre_doc.to_dict().get("fcmToken", "")
+        if not fcm_token:
+            return  # Padre sin token (nunca abrió la app)
 
-        if not token:
-            escribir_log(f"Padre {padre_id} no tiene fcmToken")
-            return
+        # 3. Construir y enviar la notificación
+        nombre_corto = nombre.split()[0] if nombre else "Tu hijo/a"
 
-        partes = fecha_hora.split(" ")
-        hora = partes[1] if len(partes) > 1 else ""
+        try:
+            h, m, _ = hora.split(":")
+            h12 = int(h)
+            ampm = "AM" if h12 < 12 else "PM"
+            h12 = h12 if h12 <= 12 else h12 - 12
+            h12 = 12 if h12 == 0 else h12
+            hora_fmt = f"{h12}:{m} {ampm}"
+        except Exception:
+            hora_fmt = hora
 
-        titulo = "📚 SICCE"
-
-        if tipo == "entrada":
-            cuerpo = f"Tu hijo {nombre} ingresó a la escuela a las {hora}."
-        else:
-            cuerpo = f"Tu hijo {nombre} salió de la escuela a las {hora}."
+        tipo_texto = "entrada" if tipo_registro == "entrada" else "salida"
+        emoji = "🟢" if tipo_registro == "entrada" else "🔴"
 
         mensaje = messaging.Message(
             notification=messaging.Notification(
-                title=titulo,
-                body=cuerpo,
+                title=f"{emoji} Registro biométrico – {nombre}",
+                body=f"{nombre_corto} registró su {tipo_texto} a las {hora_fmt}",
             ),
-            token=token,
+            data={
+                "matricula": matricula,
+                "fecha": fecha,
+                "hora": hora,
+                "tipo": tipo_registro,
+            },
+            android=messaging.AndroidConfig(
+                priority="high",
+                notification=messaging.AndroidNotification(
+                    channel_id="asistencia_sicce",
+                    sound="default",
+                ),
+            ),
+            token=fcm_token,
         )
 
         messaging.send(mensaje)
+        escribir_log(f"Notificación enviada al padre de {matricula} ({tipo_texto} {hora_fmt})")
 
-        db.collection("usuarios").document(padre_id).collection("notificaciones").add({
-            "titulo": titulo,
-            "mensaje": cuerpo,
-            "matricula": matricula,
-            "nombreAlumno": nombre,
-            "fechaHora": fecha_hora,
-            "tipo": tipo,
-            "leida": False,
-            "createdAt": firestore.SERVER_TIMESTAMP,
-        })
-
-        escribir_log(f"Notificación enviada: {padre_id} | {cuerpo}")
+        # Guardar en la subcolección de notificaciones para que el tutor pueda consultarlas
+        try:
+            db.collection("usuarios").document(padre_id).collection("notificaciones").add({
+                "titulo": f"{emoji} Registro biométrico – {nombre}",
+                "mensaje": f"{nombre_corto} registró su {tipo_texto} a las {hora_fmt}",
+                "matricula": matricula,
+                "nombreAlumno": nombre,
+                "fechaHora": f"{fecha} {hora}",
+                "tipo": tipo_registro,
+                "leida": False,
+                "createdAt": firestore.SERVER_TIMESTAMP,
+            })
+        except Exception as e_notif:
+            escribir_log(f"Error al guardar historial de notificación en Firestore para {matricula}: {e_notif}")
 
     except Exception as e:
-        escribir_log(f"Error enviando notificación: {e}")
+        escribir_log(f"Error al enviar notificación FCM para {matricula}: {e}")
 
 
 def procesar_asistencia_diaria(db, matricula, nombre, fecha_hora):
@@ -153,9 +246,18 @@ def procesar_asistencia_diaria(db, matricula, nombre, fecha_hora):
             h = int(h)
             m = int(m)
 
-            if h > 7 or (h == 7 and m > 5):
+            if h > 7 or (h == 7 and m > 15):
                 estado = "Retardo"
         except:
+            pass
+
+        # Permite ±2 días de tolerancia por diferencias horarias o del reloj del biométrico
+        es_reciente = False
+        try:
+            fecha_dt = datetime.strptime(fecha, "%Y-%m-%d").date()
+            hoy_dt = datetime.now().date()
+            es_reciente = abs((hoy_dt - fecha_dt).days) <= 2
+        except Exception:
             pass
 
         if not doc.exists:
@@ -169,55 +271,394 @@ def procesar_asistencia_diaria(db, matricula, nombre, fecha_hora):
                 "origen": "ZKBioTime MB160",
                 "fechaSincronizacion": firestore.SERVER_TIMESTAMP
             })
+            # Notificar al padre solo si es asistencia reciente
+            if es_reciente:
+                enviar_notificacion_padre(db, matricula, nombre, fecha, hora, "entrada")
+        else:
+            data = doc.to_dict()
 
-            enviar_notificacion_padre(
-                db,
-                matricula,
-                nombre,
-                fecha_hora,
-                "entrada"
-            )
+            entrada_actual = data.get("entrada", "")
+            salida_actual = data.get("salida", "")
 
-            escribir_log(f"Entrada registrada: {matricula} | {hora}")
-            return
-
-        data = doc.to_dict()
-
-        entrada_actual = data.get("entrada", "")
-        salida_actual = data.get("salida", "")
-
-        if entrada_actual != "" and salida_actual == "":
-            if hora != entrada_actual:
+            if entrada_actual == "":
                 doc_ref.update({
-                    "salida": hora,
+                    "entrada": hora,
+                    "estado": estado,
                     "fechaSincronizacion": firestore.SERVER_TIMESTAMP
                 })
-
-                enviar_notificacion_padre(
-                    db,
-                    matricula,
-                    nombre,
-                    fecha_hora,
-                    "salida"
-                )
-
-                escribir_log(f"Salida registrada: {matricula} | {hora}")
-
-        else:
-            escribir_log(
-                f"Registro ignorado, ya tiene entrada y salida: {matricula} | {hora}"
-            )
+                if es_reciente:
+                    enviar_notificacion_padre(db, matricula, nombre, fecha, hora, "entrada")
+            else:
+                if hora != entrada_actual and hora != salida_actual:
+                    doc_ref.update({
+                        "salida": hora,
+                        "fechaSincronizacion": firestore.SERVER_TIMESTAMP
+                    })
+                    if es_reciente:
+                        enviar_notificacion_padre(db, matricula, nombre, fecha, hora, "salida")
 
     except Exception as e:
         escribir_log(f"Error procesando asistencia diaria: {e}")
 
 
-conexion = None
+# =========================
+# PROCESO PRINCIPAL
+# =========================
 
-try:
-    print("===================================")
-    print("INICIANDO SINCRONIZACIÓN ZKBIOTIME")
-    print("===================================")
+def sincronizar_once(db):
+    # ==========================================
+    # PROCESAR SOLICITUDES DE BAJA (DELETIONS)
+    # ==========================================
+    try:
+        bajas_ref = db.collection("bajas_pendientes").where("estado", "==", "pendiente").get()
+        if len(bajas_ref) > 0:
+            print(f"Procesando {len(bajas_ref)} solicitudes de baja pendientes...")
+            
+            # Conexión independiente para bajas
+            conexion_baja = psycopg2.connect(
+                host=POSTGRES_HOST,
+                port=POSTGRES_PORT,
+                database=POSTGRES_DB,
+                user=POSTGRES_USER,
+                password=POSTGRES_PASSWORD
+            )
+            cursor_baja = conexion_baja.cursor()
+            
+            for doc in bajas_ref:
+                baja_data = doc.to_dict()
+                matricula = baja_data.get("matricula")
+                nombre_baja = baja_data.get("nombre", "")
+                
+                if not matricula:
+                    continue
+                
+                escribir_log(f"Iniciando proceso de baja para matrícula: {matricula} - {nombre_baja}")
+                print(f"Baja de: {matricula} - {nombre_baja}")
+                
+                try:
+                    conexion_baja.autocommit = False
+                    
+                    # 1. Obtener ID del empleado
+                    cursor_baja.execute("SELECT id FROM personnel_employee WHERE emp_code = %s", (matricula,))
+                    res_emp = cursor_baja.fetchone()
+                    
+                    if res_emp:
+                        emp_id = res_emp[0]
+                        
+                        # Obtener todas las FKs que apuntan a personnel_employee
+                        cursor_baja.execute("""
+                            SELECT
+                                tc.table_name AS foreign_table,
+                                kcu.column_name AS foreign_column,
+                                ccu.table_name AS referenced_table,
+                                ccu.column_name AS referenced_column
+                            FROM 
+                                information_schema.table_constraints AS tc 
+                                JOIN information_schema.key_column_usage AS kcu
+                                  ON tc.constraint_name = kcu.constraint_name
+                                  AND tc.table_schema = kcu.table_schema
+                                JOIN information_schema.constraint_column_usage AS ccu
+                                  ON ccu.constraint_name = tc.constraint_name
+                                  AND ccu.table_schema = tc.table_schema
+                            WHERE tc.constraint_type = 'FOREIGN KEY' 
+                              AND ccu.table_name = 'personnel_employee';
+                        """)
+                        fks = cursor_baja.fetchall()
+                        
+                        # Limpiar referencias
+                        for table, col, ref_table, ref_col in fks:
+                            if table == "personnel_employee" and col == "superior_id":
+                                cursor_baja.execute("UPDATE personnel_employee SET superior_id = NULL WHERE superior_id = %s", (emp_id,))
+                            elif table == "personnel_department" and col == "dept_manager_id":
+                                cursor_baja.execute("UPDATE personnel_department SET dept_manager_id = NULL WHERE dept_manager_id = %s", (emp_id,))
+                            elif table == "personnel_employee" and col == "id":
+                                continue
+                            else:
+                                cursor_baja.execute(f"DELETE FROM {table} WHERE {col} = %s", (emp_id,))
+                        
+                        # Eliminar el registro del empleado
+                        cursor_baja.execute("DELETE FROM personnel_employee WHERE id = %s", (emp_id,))
+                        conexion_baja.commit()
+                        escribir_log(f"Empleado {matricula} eliminado de PostgreSQL ZKBioTime.")
+                        print(f"Empleado {matricula} eliminado de PostgreSQL.")
+                    else:
+                        escribir_log(f"Empleado {matricula} no se encontró en PostgreSQL (ZKBioTime).")
+                        print(f"Empleado {matricula} no se encontró en PostgreSQL.")
+                    
+                    # 2. Eliminar de Firebase Firestore
+                    db.collection("zktime_empleados").document(matricula).delete()
+                    # Borrar la solicitud de baja ya procesada
+                    db.collection("bajas_pendientes").document(matricula).delete()
+                    escribir_log(f"Empleado {matricula} eliminado de Firestore y solicitud borrada.")
+                    print(f"Empleado {matricula} eliminado de Firestore.")
+                    
+                except Exception as e_inner:
+                    conexion_baja.rollback()
+                    escribir_log(f"Error procesando baja de {matricula}: {e_inner}")
+                    print(f"Error procesando baja de {matricula}: {e_inner}")
+                    # Actualizar estado a error para no ciclar infinitamente si es un error permanente
+                    db.collection("bajas_pendientes").document(matricula).update({
+                        "estado": "error",
+                        "error_msg": str(e_inner)
+                    })
+                    
+            conexion_baja.close()
+    except Exception as e_outer:
+        escribir_log(f"Error general en bajas: {e_outer}")
+        print(f"Error general en bajas: {e_outer}")
+
+    conexion = None
+
+    try:
+        ultimo_id = obtener_ultimo_id()
+        if ultimo_id is None:
+            ultimo_id = obtener_max_id_db()
+            guardar_ultimo_id(ultimo_id)
+            print(f"Estado de sincronización inicializado en ID: {ultimo_id}")
+            escribir_log(f"Estado de sincronización inicializado en ID: {ultimo_id}")
+
+        conexion = psycopg2.connect(
+            host=POSTGRES_HOST,
+            port=POSTGRES_PORT,
+            database=POSTGRES_DB,
+            user=POSTGRES_USER,
+            password=POSTGRES_PASSWORD
+        )
+
+        cursor = conexion.cursor()
+
+        # =========================
+        # EMPLEADOS / ALUMNOS
+        # =========================
+
+        # Obtener IDs de empleados con huella dactilar registrada (bio_type = 1)
+        cursor.execute("SELECT DISTINCT employee_id FROM iclock_biodata WHERE bio_type = 1")
+        empleados_con_huella = {r[0] for r in cursor.fetchall() if r[0] is not None}
+
+        cursor.execute("""
+            SELECT
+                e.id,
+                e.emp_code,
+                e.first_name,
+                e.last_name,
+                e.email,
+                e.gender,
+                e.mobile,
+                e.address,
+                e.birthday,
+                e.department_id,
+                d.dept_name
+            FROM personnel_employee e
+            LEFT JOIN personnel_department d
+                ON e.department_id = d.id
+            ORDER BY e.id ASC
+        """)
+
+        empleados = cursor.fetchall()
+
+        print(f"Empleados encontrados: {len(empleados)}")
+
+        # Conjunto de matrículas activas en ZKBioTime (para detectar bajas)
+        matriculas_activas_zk = set()
+        for e in empleados:
+            empleado_id_raw = e[0]
+            empleado_id = limpiar(empleado_id_raw)
+            matricula = limpiar(e[1])
+            nombre = limpiar(e[2])
+            apellidos = limpiar(e[3])
+            correo = limpiar(e[4])
+            sexo = convertir_sexo(e[5])
+            telefono = limpiar(e[6])
+            direccion = limpiar(e[7])
+            cumpleanos = limpiar(e[8])
+            departamento_id = limpiar(e[9])
+            grado_grupo = limpiar(e[10])
+
+            grado, grupo = separar_grado_grupo(grado_grupo)
+
+            nombre_completo = f"{nombre} {apellidos}".strip()
+
+            if not matricula:
+                continue
+
+            matriculas_activas_zk.add(matricula)
+
+            doc_ref = db.collection("zktime_empleados").document(matricula)
+            doc = doc_ref.get()
+
+            # Validar si el empleado_id_raw (número entero) está en el set de huellas
+            estado_huella = "registrada" if empleado_id_raw in empleados_con_huella else "no registrada"
+
+            datos_empleado = {
+                "zk_employee_id": empleado_id,
+                "matricula": matricula,
+                "nombre": nombre,
+                "apellidos": apellidos,
+                "nombreCompleto": nombre_completo,
+                "correo": correo,
+                "sexo": sexo,
+                "telefono": telefono,
+                "direccion": direccion,
+                "cumpleanos": cumpleanos,
+                "department_id": departamento_id,
+                "gradoGrupo": grado_grupo,
+                "grado": grado,
+                "grupo": grupo,
+                "estadoHuella": estado_huella,
+                "origen": "ZKBioTime MB160",
+                "fechaSincronizacion": firestore.SERVER_TIMESTAMP
+            }
+
+            if doc.exists:
+                datos_actuales = doc.to_dict()
+
+                if "padreId" not in datos_actuales:
+                    datos_empleado["padreId"] = ""
+
+                doc_ref.set(datos_empleado, merge=True)
+            else:
+                datos_empleado["padreId"] = ""
+                doc_ref.set(datos_empleado)
+
+            escribir_log(f"Alumno sincronizado: {matricula} - {nombre_completo} (Huella: {estado_huella})")
+
+        # =========================
+        # BAJAS POR ELIMINACIÓN EN ZKBIOTIME
+        # =========================
+        # Detectar alumnos en Firestore que ya no existen en ZKBioTime y eliminarlos
+        try:
+            docs_firestore = db.collection("zktime_empleados").get()
+            for doc_fs in docs_firestore:
+                mat_fs = doc_fs.id
+                if mat_fs not in matriculas_activas_zk:
+                    doc_fs.reference.delete()
+                    escribir_log(f"Alumno eliminado de Firestore (baja automática): {mat_fs}")
+                    print(f"Alumno eliminado de Firestore por baja en ZKBioTime: {mat_fs}")
+        except Exception as e_bajas:
+            escribir_log(f"Error al sincronizar bajas automáticas: {e_bajas}")
+
+        # =========================
+        # ASISTENCIAS / MARCACIONES
+        # =========================
+
+        cursor.execute("""
+            SELECT
+                t.id,
+                t.emp_id,
+                t.punch_time,
+                e.emp_code,
+                e.first_name,
+                e.last_name,
+                d.dept_name
+            FROM iclock_transaction t
+            JOIN personnel_employee e
+                ON t.emp_id = e.id
+            LEFT JOIN personnel_department d
+                ON e.department_id = d.id
+            WHERE t.id > %s
+            ORDER BY t.id ASC
+        """, (ultimo_id,))
+
+        registros = cursor.fetchall()
+
+        print(f"Asistencias encontradas: {len(registros)}")
+
+        max_id_procesado = ultimo_id
+        for r in registros:
+            zk_id = limpiar(r[0])
+            try:
+                zk_id_int = int(zk_id)
+                if zk_id_int > max_id_procesado:
+                    max_id_procesado = zk_id_int
+            except:
+                pass
+
+            fecha_hora = formatear_fecha_hora(r[2])
+            matricula = limpiar(r[3])
+            nombre_asistencia = f"{limpiar(r[4])} {limpiar(r[5])}".strip()
+            grado_grupo = limpiar(r[6])
+            grado, grupo = separar_grado_grupo(grado_grupo)
+
+            if not zk_id or not matricula:
+                continue
+
+            # Separar fecha y hora
+            partes = fecha_hora.split(" ")
+            fecha = partes[0] if len(partes) > 0 else ""
+            hora = partes[1] if len(partes) > 1 else ""
+
+            # Determinar tipoRegistro (entrada o salida)
+            doc_diario_ref = db.collection("asistencias_diarias").document(f"{matricula}_{fecha}")
+            doc_diario = doc_diario_ref.get()
+            
+            tipo_registro = "entrada"
+            if doc_diario.exists:
+                diario_data = doc_diario.to_dict()
+                entrada_actual = diario_data.get("entrada", "")
+                if entrada_actual and entrada_actual != hora:
+                    tipo_registro = "salida"
+
+            db.collection("asistencias").document(zk_id).set({
+                "zk_id": zk_id,
+                "matricula": matricula,
+                "matriculaAlumno": matricula,
+                "nombre": nombre_asistencia,
+                "nombreAlumno": nombre_asistencia,
+                "grado": grado,
+                "grupo": grupo,
+                "fecha": fecha,
+                "hora": hora,
+                "tipoRegistro": tipo_registro,
+                "fechaHora": fecha_hora,
+                "origen": "MB160",
+                "fechaSincronizacion": firestore.SERVER_TIMESTAMP
+            }, merge=True)
+
+            procesar_asistencia_diaria(
+                db,
+                matricula,
+                nombre_asistencia,
+                fecha_hora
+            )
+
+            escribir_log(
+                f"Asistencia sincronizada: {zk_id} | {matricula} | {fecha_hora}"
+            )
+
+        if max_id_procesado > ultimo_id:
+            guardar_ultimo_id(max_id_procesado)
+            escribir_log(f"Último ID sincronizado actualizado a: {max_id_procesado}")
+
+        mensaje = (
+            f"Sincronización exitosa ZKBioTime. "
+            f"Empleados: {len(empleados)} | "
+            f"Asistencias: {len(registros)}"
+        )
+
+        print(mensaje)
+        escribir_log(mensaje)
+
+    except Exception:
+        error = traceback.format_exc()
+
+        print("ERROR DURANTE LA SINCRONIZACIÓN")
+        print(error)
+
+        escribir_log("ERROR")
+        escribir_log(error)
+
+    finally:
+        if conexion:
+            conexion.close()
+
+
+if __name__ == "__main__":
+    evitar_multiples_instancias()
+    print("==================================================")
+    print("INICIANDO SERVICIO DE SINCRONIZACIÓN AUTOMÁTICA ZK")
+    print("==================================================")
+    print("Firebase:", FIREBASE_KEY)
+    print("ZKBioTime DB:", POSTGRES_HOST, POSTGRES_PORT)
 
     if not os.path.exists(FIREBASE_KEY):
         raise FileNotFoundError(f"No existe el archivo Firebase: {FIREBASE_KEY}")
@@ -228,160 +669,18 @@ try:
 
     db = firestore.client()
 
-    conexion = psycopg2.connect(
-        host=POSTGRES_HOST,
-        port=POSTGRES_PORT,
-        database=POSTGRES_DB,
-        user=POSTGRES_USER,
-        password=POSTGRES_PASSWORD
-    )
+    print("\nServicio activo. Sincronizando cada 5 segundos...")
+    print("Presiona Ctrl+C para detener el servicio.\n")
 
-    cursor = conexion.cursor()
-
-    cursor.execute("""
-        SELECT
-            e.id,
-            e.emp_code,
-            e.first_name,
-            e.last_name,
-            e.email,
-            e.gender,
-            e.mobile,
-            e.address,
-            e.birthday,
-            e.department_id,
-            d.dept_name
-        FROM personnel_employee e
-        LEFT JOIN personnel_department d
-            ON e.department_id = d.id
-        ORDER BY e.id ASC
-    """)
-
-    empleados = cursor.fetchall()
-    print(f"Empleados encontrados: {len(empleados)}")
-
-    for e in empleados:
-        empleado_id = limpiar(e[0])
-        matricula = limpiar(e[1])
-        nombre = limpiar(e[2])
-        apellidos = limpiar(e[3])
-        correo = limpiar(e[4])
-        sexo = convertir_sexo(e[5])
-        telefono = limpiar(e[6])
-        direccion = limpiar(e[7])
-        cumpleanos = limpiar(e[8])
-        departamento_id = limpiar(e[9])
-        grado_grupo = limpiar(e[10])
-
-        grado, grupo = separar_grado_grupo(grado_grupo)
-        nombre_completo = f"{nombre} {apellidos}".strip()
-
-        if not matricula:
-            continue
-
-        doc_ref = db.collection("zktime_empleados").document(matricula)
-        doc = doc_ref.get()
-
-        datos_empleado = {
-            "zk_employee_id": empleado_id,
-            "matricula": matricula,
-            "nombre": nombre,
-            "apellidos": apellidos,
-            "nombreCompleto": nombre_completo,
-            "correo": correo,
-            "sexo": sexo,
-            "telefono": telefono,
-            "direccion": direccion,
-            "cumpleanos": cumpleanos,
-            "department_id": departamento_id,
-            "gradoGrupo": grado_grupo,
-            "grado": grado,
-            "grupo": grupo,
-            "estadoHuella": "registrada",
-            "origen": "ZKBioTime MB160",
-            "fechaSincronizacion": firestore.SERVER_TIMESTAMP
-        }
-
-        if doc.exists:
-            datos_actuales = doc.to_dict()
-            if "padreId" not in datos_actuales:
-                datos_empleado["padreId"] = ""
-            doc_ref.set(datos_empleado, merge=True)
-        else:
-            datos_empleado["padreId"] = ""
-            doc_ref.set(datos_empleado)
-
-    cursor.execute("""
-        SELECT
-            t.id,
-            t.emp_id,
-            t.punch_time,
-            e.emp_code,
-            e.first_name,
-            e.last_name
-        FROM iclock_transaction t
-        JOIN personnel_employee e
-            ON t.emp_id = e.id
-        ORDER BY t.id ASC
-    """)
-
-    registros = cursor.fetchall()
-    print(f"Asistencias encontradas: {len(registros)}")
-
-    for r in registros:
-        zk_id = limpiar(r[0])
-        fecha_hora = formatear_fecha_hora(r[2])
-        matricula = limpiar(r[3])
-        nombre_asistencia = f"{limpiar(r[4])} {limpiar(r[5])}".strip()
-
-        if not zk_id or not matricula:
-            continue
-
-        asistencia_ref = db.collection("asistencias").document(zk_id)
-        asistencia_doc = asistencia_ref.get()
-
-        if asistencia_doc.exists:
-            asistencia_data = asistencia_doc.to_dict()
-            if asistencia_data.get("procesada", False):
-                continue
-
-        asistencia_ref.set({
-            "zk_id": zk_id,
-            "matricula": matricula,
-            "fechaHora": fecha_hora,
-            "nombre": nombre_asistencia,
-            "origen": "ZKBioTime MB160",
-            "procesada": True,
-            "fechaSincronizacion": firestore.SERVER_TIMESTAMP
-        }, merge=True)
-
-        procesar_asistencia_diaria(
-            db,
-            matricula,
-            nombre_asistencia,
-            fecha_hora
-        )
-
-        escribir_log(f"Asistencia procesada: {zk_id} | {matricula} | {fecha_hora}")
-
-    mensaje = (
-        f"Sincronización exitosa ZKBioTime. "
-        f"Empleados: {len(empleados)} | "
-        f"Asistencias: {len(registros)}"
-    )
-
-    print(mensaje)
-    escribir_log(mensaje)
-
-except Exception:
-    error = traceback.format_exc()
-
-    print("ERROR DURANTE LA SINCRONIZACIÓN")
-    print(error)
-
-    escribir_log("ERROR")
-    escribir_log(error)
-
-finally:
-    if conexion:
-        conexion.close()
+    while True:
+        try:
+            print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Ejecutando sincronización...")
+            sincronizar_once(db)
+        except KeyboardInterrupt:
+            print("\nServicio detenido por el usuario.")
+            break
+        except Exception as e:
+            print(f"Error crítico en el bucle principal: {e}")
+            escribir_log(f"CRITICAL LOOP ERROR: {e}")
+        
+        time.sleep(5)

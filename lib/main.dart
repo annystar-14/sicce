@@ -3,11 +3,12 @@ import 'viewmodels/auth.dart';
 import 'views/login_page.dart';
 import 'package:provider/provider.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'views/alumnos/alumno_login_page.dart';
 import 'viewmodels/dashboard_padre.dart';
 import 'viewmodels/dashboard_alumno.dart';
-import 'package:firebase_messaging/firebase_messaging.dart';
 import 'services/notificacion_push.dart';
+import 'viewmodels/asistencia.dart';
 
 //PALETA DE COLORES DE TOMADO DE CANVA
 //https://www.canva.com/design/DAHByoEiWdQ/KIicJ_nqgwmEGCFJ0YqEdw/edit
@@ -16,16 +17,34 @@ const Color kColorAcentoRojo = Color(0xFFAE0E0F);
 const Color kColorTextoOscuro = Color(0xFF0D0E4A);
 const Color kColorFondoGrisClaro = Color(0xFFF2F2F3);
 
-Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+/// Handler para mensajes FCM recibidos en BACKGROUND/TERMINADO
+@pragma('vm:entry-point')
+Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   await Firebase.initializeApp();
+  // El sistema Android muestra la notificación automáticamente
 }
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp();
 
-  FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
+  // Registrar handler de mensajes en background
+  FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
   await NotificacionPushService.inicializarLocalNotifications();
+
+  // Solicitar permisos de notificación (iOS + Android 13+)
+  await FirebaseMessaging.instance.requestPermission(
+    alert: true,
+    badge: true,
+    sound: true,
+  );
+
+  // Mostrar notificaciones en PRIMER PLANO (cuando la app está abierta)
+  await FirebaseMessaging.instance.setForegroundNotificationPresentationOptions(
+    alert: true,
+    badge: true,
+    sound: true,
+  );
 
   runApp(MyApp());
 }
@@ -37,6 +56,7 @@ class MyApp extends StatelessWidget {
       ChangeNotifierProvider(create: (_) => AuthViewModel()),
       ChangeNotifierProvider(create: (_) => DashboardPadreViewModel()),
       ChangeNotifierProvider(create: (_) => DashboardAlumnoViewModel()),
+      ChangeNotifierProvider(create: (_) => AsistenciaViewModel()),
     ],
       child: MaterialApp(
         debugShowCheckedModeBanner: false,

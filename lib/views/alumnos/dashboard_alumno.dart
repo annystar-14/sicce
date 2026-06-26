@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../../models/alumnos.dart';
 import '../../models/asistencia.dart';
@@ -25,6 +26,10 @@ class AlumnoHomePage extends StatefulWidget {
 
 class _AlumnoHomePageState extends State<AlumnoHomePage> {
   int _currentIndex = 0;
+  bool _verCalendario = false;
+  DateTime _calendarMonth = DateTime.now();
+  Map<String, dynamic>? _selectedDayEvent;
+  String? _selectedDayAttendance;
 
   @override
   void initState() {
@@ -172,7 +177,7 @@ Widget _buildInicio(DashboardAlumnoViewModel vm) {
           child: Padding(
             padding: const EdgeInsets.all(20),
             child: ultima == null
-                ? const Text("No hay registro biométrico de hoy")
+                ? const Text("Aún no tienes asistencia registrada hoy")
                 : Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -281,6 +286,33 @@ Widget _buildInicio(DashboardAlumnoViewModel vm) {
             ),
           ),
         ),
+
+        const SizedBox(height: 24),
+
+        Card(
+          elevation: 2,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: ListTile(
+            leading: const CircleAvatar(
+              backgroundColor: kColorAcentoRojo,
+              child: Icon(Icons.report_problem_outlined, color: Colors.white),
+            ),
+            title: const Text(
+              "Reportar Profesor Ausente",
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
+                color: kColorTextoOscuro,
+              ),
+            ),
+            subtitle: const Text(
+              "Informa a la dirección escolar si un docente no asistió a su clase.",
+            ),
+            trailing: const Icon(Icons.arrow_forward_ios),
+            onTap: () => _mostrarDialogoReportarProfesor(context),
+          ),
+        ),
       ],
     ),
   );
@@ -356,12 +388,6 @@ Widget _buildInicio(DashboardAlumnoViewModel vm) {
 }
 
 Widget _buildHistorial(DashboardAlumnoViewModel vm) {
-  if (vm.historial.isEmpty) {
-    return const Center(
-      child: Text("No hay registros biométricos aún"),
-    );
-  }
-
   return Column(
     children: [
       Padding(
@@ -369,13 +395,29 @@ Widget _buildHistorial(DashboardAlumnoViewModel vm) {
         child: Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            const Text(
-              "Tus registros",
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.bold,
-                color: kColorTextoOscuro,
-              ),
+            Row(
+              children: [
+                const Text(
+                  "Historial",
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: kColorTextoOscuro,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                IconButton(
+                  icon: Icon(_verCalendario ? Icons.list : Icons.calendar_month, color: kColorPrincipalAzul),
+                  tooltip: _verCalendario ? "Ver en lista" : "Ver en calendario",
+                  onPressed: () {
+                    setState(() {
+                      _verCalendario = !_verCalendario;
+                      _selectedDayEvent = null;
+                      _selectedDayAttendance = null;
+                    });
+                  },
+                ),
+              ],
             ),
             ElevatedButton.icon(
               onPressed: () => PdfService.generarReportePdf(
@@ -399,47 +441,345 @@ Widget _buildHistorial(DashboardAlumnoViewModel vm) {
         ),
       ),
       Expanded(
-        child: ListView.builder(
-          physics: const AlwaysScrollableScrollPhysics(),
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          itemCount: vm.historial.length,
-          itemBuilder: (context, index) {
-            final registro = vm.historial[index];
-            final retardo = registro.estado == "Retardo";
+        child: _verCalendario
+            ? SingleChildScrollView(child: _buildCalendario(vm))
+            : (vm.historial.isEmpty
+                ? Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.fingerprint, size: 60, color: Colors.grey[300]),
+                        const SizedBox(height: 12),
+                        const Text(
+                          "No hay registros biométricos aún",
+                          style: TextStyle(color: Colors.grey),
+                        ),
+                        const SizedBox(height: 8),
+                        TextButton.icon(
+                          onPressed: () => setState(() => _verCalendario = true),
+                          icon: const Icon(Icons.calendar_month),
+                          label: const Text("Ver calendario escolar"),
+                        ),
+                      ],
+                    ),
+                  )
+                : ListView.builder(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    itemCount: vm.historial.length,
+                    itemBuilder: (context, index) {
+                      final registro = vm.historial[index];
+                      final retardo = registro.estado == "Retardo";
+                      final falta = registro.estado == "Falta";
 
-            return Card(
-              margin: const EdgeInsets.only(bottom: 12),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
+                      return Card(
+                        margin: const EdgeInsets.only(bottom: 12),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: ListTile(
+                          leading: Icon(
+                            Icons.fingerprint,
+                            color: retardo
+                                ? Colors.orange
+                                : (falta ? Colors.red : Colors.green),
+                            size: 36,
+                          ),
+                          title: Text(
+                            _formatFecha(registro.fecha),
+                            style: const TextStyle(fontWeight: FontWeight.bold),
+                          ),
+                          subtitle: Text(
+                            "Entrada: ${registro.entrada.isEmpty ? '-' : registro.entrada}\nSalida: ${registro.salida.isEmpty ? "Pendiente" : registro.salida}",
+                            style: TextStyle(
+                              color: retardo
+                                  ? Colors.orange
+                                  : (falta ? Colors.red : Colors.green),
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          trailing: Text(
+                            registro.estado,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                      );
+                    },
+                  )),
+      ),
+    ],
+  );
+}
+
+Widget _buildCalendario(DashboardAlumnoViewModel vm) {
+  final weekDays = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"];
+  final year = _calendarMonth.year;
+  final month = _calendarMonth.month;
+
+  final firstDayOfMonth = DateTime(year, month, 1);
+  final totalDays = DateTime(year, month + 1, 0).day;
+  final startWeekday = firstDayOfMonth.weekday;
+
+  final paddingCells = startWeekday - 1;
+  final totalCells = paddingCells + totalDays;
+
+  final monthNames = [
+    "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
+    "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"
+  ];
+
+  return Column(
+    children: [
+      Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            IconButton(
+              icon: const Icon(Icons.chevron_left, color: kColorPrincipalAzul),
+              onPressed: () {
+                setState(() {
+                  _calendarMonth = DateTime(year, month - 1, 1);
+                  _selectedDayEvent = null;
+                  _selectedDayAttendance = null;
+                });
+              },
+            ),
+            Text(
+              "${monthNames[month - 1]} $year",
+              style: const TextStyle(
+                fontWeight: FontWeight.bold,
+                fontSize: 16,
+                color: kColorTextoOscuro,
               ),
-              child: ListTile(
-                leading: Icon(
-                  Icons.fingerprint,
-                  color: retardo ? Colors.orange : Colors.green,
-                  size: 36,
+            ),
+            IconButton(
+              icon: const Icon(Icons.chevron_right, color: kColorPrincipalAzul),
+              onPressed: () {
+                setState(() {
+                  _calendarMonth = DateTime(year, month + 1, 1);
+                  _selectedDayEvent = null;
+                  _selectedDayAttendance = null;
+                });
+              },
+            ),
+          ],
+        ),
+      ),
+      Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceAround,
+          children: weekDays.map((day) => Expanded(
+            child: Center(
+              child: Text(
+                day,
+                style: const TextStyle(
+                  fontWeight: FontWeight.w600,
+                  fontSize: 12,
+                  color: Colors.grey,
                 ),
-                title: Text(
-                  _formatFecha(registro.fecha),
-                  style: const TextStyle(fontWeight: FontWeight.bold),
+              ),
+            ),
+          )).toList(),
+        ),
+      ),
+      const SizedBox(height: 8),
+      Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        child: GridView.builder(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: 7,
+            mainAxisSpacing: 6,
+            crossAxisSpacing: 6,
+            childAspectRatio: 1,
+          ),
+          itemCount: totalCells,
+          itemBuilder: (context, index) {
+            if (index < paddingCells) {
+              return const SizedBox.shrink();
+            }
+
+            final dayNum = index - paddingCells + 1;
+            final cellDateStr = "$year-${month.toString().padLeft(2, '0')}-${dayNum.toString().padLeft(2, '0')}";
+
+            final asistenciasHoy = vm.historial.where((a) => a.fecha == cellDateStr).toList();
+            final asistencia = asistenciasHoy.isNotEmpty ? asistenciasHoy.first : null;
+            final event = vm.calendarioEvents[cellDateStr];
+
+            Color cellBg = Colors.white;
+            Color borderCol = Colors.grey[200]!;
+            Color textCol = kColorTextoOscuro;
+            IconData? cellIcon;
+            Color iconCol = Colors.transparent;
+
+            if (event != null) {
+              if (event['tipo'] == 'suspension') {
+                cellBg = const Color(0xFFF3E5F5);
+                borderCol = Colors.purple[300]!;
+                textCol = Colors.purple[900]!;
+                cellIcon = Icons.event_busy;
+                iconCol = Colors.purple;
+              } else if (event['tipo'] == 'puente') {
+                cellBg = const Color(0xFFE3F2FD);
+                borderCol = Colors.blue[300]!;
+                textCol = Colors.blue[900]!;
+                cellIcon = Icons.alt_route;
+                iconCol = Colors.blue;
+              } else {
+                cellBg = const Color(0xFFFFF8E1);
+                borderCol = Colors.amber[300]!;
+                textCol = Colors.amber[900]!;
+                cellIcon = Icons.star;
+                iconCol = Colors.amber[800]!;
+              }
+            } else if (asistencia != null) {
+              if (asistencia.estado == "Asistencia") {
+                cellBg = const Color(0xFFE8F5E9);
+                borderCol = Colors.green[300]!;
+                textCol = Colors.green[900]!;
+                cellIcon = Icons.check;
+                iconCol = Colors.green;
+              } else if (asistencia.estado == "Retardo") {
+                cellBg = const Color(0xFFFFF3E0);
+                borderCol = Colors.orange[300]!;
+                textCol = Colors.orange[900]!;
+                cellIcon = Icons.access_time;
+                iconCol = Colors.orange;
+              } else if (asistencia.estado == "Falta") {
+                cellBg = const Color(0xFFFFEBEE);
+                borderCol = Colors.red[300]!;
+                textCol = Colors.red[900]!;
+                cellIcon = Icons.close;
+                iconCol = Colors.red;
+              }
+            }
+
+            return GestureDetector(
+              onTap: () {
+                setState(() {
+                  _selectedDayEvent = event;
+                  if (asistencia != null) {
+                    _selectedDayAttendance =
+                        "Entrada: ${asistencia.entrada.isNotEmpty ? asistencia.entrada : '-'}\nSalida: ${asistencia.salida.isNotEmpty ? asistencia.salida : 'Pendiente'}\nEstado: ${asistencia.estado}";
+                  } else {
+                    _selectedDayAttendance = null;
+                  }
+                });
+              },
+              child: Container(
+                decoration: BoxDecoration(
+                  color: cellBg,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: borderCol, width: 1.5),
                 ),
-                subtitle: Text(
-                  "Entrada: ${registro.entrada}\nSalida: ${registro.salida.isEmpty ? "Pendiente" : registro.salida}",
-                  style: TextStyle(
-                    color: retardo ? Colors.orange : Colors.green,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                trailing: Text(
-                  registro.estado,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.bold,
-                  ),
+                child: Stack(
+                  children: [
+                    Center(
+                      child: Text(
+                        dayNum.toString(),
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: textCol,
+                          fontSize: 14,
+                        ),
+                      ),
+                    ),
+                    if (cellIcon != null)
+                      Positioned(
+                        right: 2,
+                        bottom: 2,
+                        child: Icon(
+                          cellIcon,
+                          size: 11,
+                          color: iconCol,
+                        ),
+                      )
+                  ],
                 ),
               ),
             );
           },
         ),
       ),
+      if (_selectedDayEvent != null || _selectedDayAttendance != null)
+        Padding(
+          padding: const EdgeInsets.all(16),
+          child: Card(
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
+            color: Colors.white,
+            elevation: 2,
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (_selectedDayEvent != null) ...[
+                    Row(
+                      children: [
+                        Icon(
+                          _selectedDayEvent!['tipo'] == 'suspension'
+                              ? Icons.event_busy
+                              : _selectedDayEvent!['tipo'] == 'puente'
+                                  ? Icons.alt_route
+                                  : Icons.star,
+                          color: kColorPrincipalAzul,
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          _selectedDayEvent!['tipo'] == 'suspension'
+                              ? "Suspensión de Clases"
+                              : _selectedDayEvent!['tipo'] == 'puente'
+                                  ? "Fin de Semana Largo / Puente"
+                                  : "Día Festivo",
+                          style: const TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 14,
+                            color: kColorTextoOscuro,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      _selectedDayEvent!['descripcion'] ?? "Sin descripción",
+                      style: const TextStyle(fontSize: 13),
+                    ),
+                    if (_selectedDayAttendance != null)
+                      const Divider(height: 20),
+                  ],
+                  if (_selectedDayAttendance != null) ...[
+                    const Row(
+                      children: [
+                        Icon(Icons.fingerprint, color: Colors.green),
+                        SizedBox(width: 8),
+                        Text(
+                          "Registro Biométrico",
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 14,
+                            color: kColorTextoOscuro,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      _selectedDayAttendance!,
+                      style: const TextStyle(fontSize: 13, height: 1.4),
+                    ),
+                  ]
+                ],
+              ),
+            ),
+          ),
+        ),
     ],
   );
 }
@@ -564,7 +904,29 @@ Widget _buildHistorial(DashboardAlumnoViewModel vm) {
         const SizedBox(height: 30),
 
         ElevatedButton.icon(
-          onPressed: () => Navigator.of(context).pop(),
+          onPressed: () async {
+            final confirm = await showDialog<bool>(
+              context: context,
+              builder: (context) => AlertDialog(
+                title: const Text("Cerrar Sesión"),
+                content: const Text("¿Estás seguro de que deseas salir?"),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(context, false),
+                    child: const Text("Cancelar"),
+                  ),
+                  TextButton(
+                    onPressed: () => Navigator.pop(context, true),
+                    child: const Text("Salir"),
+                  ),
+                ],
+              ),
+            );
+
+            if (confirm == true && context.mounted) {
+              Navigator.of(context).pop();
+            }
+          },
           icon: const Icon(Icons.logout, color: Colors.white),
           label: const Text(
             "Cerrar sesión",
@@ -604,6 +966,176 @@ Widget _buildHistorial(DashboardAlumnoViewModel vm) {
       leading: Icon(icon, color: kColorPrincipalAzul),
       title: Text(label),
       subtitle: Text(value),
+    );
+  }
+
+  void _mostrarDialogoReportarProfesor(BuildContext context) {
+    final nombreProfesorController = TextEditingController();
+    final materiaController = TextEditingController();
+    final motivoController = TextEditingController();
+    final formKey = GlobalKey<FormState>();
+    bool enviando = false;
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+              ),
+              title: const Row(
+                children: [
+                  Icon(Icons.report_problem_outlined, color: kColorAcentoRojo),
+                  SizedBox(width: 8),
+                  Text(
+                    "Reportar Profesor",
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      color: kColorPrincipalAzul,
+                    ),
+                  ),
+                ],
+              ),
+              content: Form(
+                key: formKey,
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Text(
+                        "Ingresa los datos del docente ausente para enviar un reporte a la dirección.",
+                        style: TextStyle(fontSize: 13, color: Colors.grey),
+                      ),
+                      const SizedBox(height: 16),
+                      TextFormField(
+                        controller: nombreProfesorController,
+                        decoration: const InputDecoration(
+                          labelText: "Nombre del Profesor",
+                          border: OutlineInputBorder(),
+                          prefixIcon: Icon(Icons.person),
+                        ),
+                        validator: (value) {
+                          if (value == null || value.trim().isEmpty) {
+                            return "Por favor ingresa el nombre";
+                          }
+                          return null;
+                        },
+                      ),
+                      const SizedBox(height: 12),
+                      TextFormField(
+                        controller: materiaController,
+                        decoration: const InputDecoration(
+                          labelText: "Materia",
+                          border: OutlineInputBorder(),
+                          prefixIcon: Icon(Icons.book_outlined),
+                        ),
+                        validator: (value) {
+                          if (value == null || value.trim().isEmpty) {
+                            return "Por favor ingresa la materia";
+                          }
+                          return null;
+                        },
+                      ),
+                      const SizedBox(height: 12),
+                      TextFormField(
+                        controller: motivoController,
+                        maxLines: 3,
+                        decoration: const InputDecoration(
+                          labelText: "Motivo / Comentarios",
+                          border: OutlineInputBorder(),
+                          prefixIcon: Icon(Icons.chat_bubble_outline),
+                          alignLabelWithHint: true,
+                        ),
+                        validator: (value) {
+                          if (value == null || value.trim().isEmpty) {
+                            return "Por favor describe la situación";
+                          }
+                          return null;
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: enviando ? null : () => Navigator.pop(dialogContext),
+                  child: const Text("Cancelar"),
+                ),
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: kColorPrincipalAzul,
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  ),
+                  onPressed: enviando
+                      ? null
+                      : () async {
+                          if (formKey.currentState!.validate()) {
+                            setDialogState(() {
+                              enviando = true;
+                            });
+
+                            try {
+                              // Guardar reporte en Firestore
+                              await FirebaseFirestore.instance.collection('alertas').add({
+                                'idAlumno': widget.alumno.matricula,
+                                'nombreAlumno': widget.alumno.nombreCompleto.isNotEmpty
+                                    ? widget.alumno.nombreCompleto
+                                    : "${widget.alumno.nombre} ${widget.alumno.apellidos}",
+                                'grado': widget.alumno.grado,
+                                'grupo': widget.alumno.grupo,
+                                'nombreProfesor': nombreProfesorController.text.trim(),
+                                'materia': materiaController.text.trim(),
+                                'motivo': motivoController.text.trim(),
+                                'fechaHora': FieldValue.serverTimestamp(),
+                                'estado': 'pendiente',
+                                'tipo': 'profesor_ausente',
+                              });
+
+                              if (dialogContext.mounted) {
+                                Navigator.pop(dialogContext);
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text("Reporte de profesor enviado con éxito."),
+                                    backgroundColor: Colors.green,
+                                  ),
+                                );
+                              }
+                            } catch (e) {
+                              setDialogState(() {
+                                enviando = false;
+                              });
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text("Error al enviar reporte: $e"),
+                                  backgroundColor: Colors.red,
+                                ),
+                              );
+                            }
+                          }
+                        },
+                  child: enviando
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(
+                            color: Colors.white,
+                            strokeWidth: 2,
+                          ),
+                        )
+                      : const Text(
+                          "Enviar",
+                          style: TextStyle(color: Colors.white),
+                        ),
+                ),
+              ],
+            );
+          },
+        );
+      },
     );
   }
 }

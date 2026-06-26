@@ -30,6 +30,22 @@ subprojects {
     project.evaluationDependsOn(":app")
 }
 
+// Forzar compileSdk en todos los subproyectos para compatibilidad con printing plugin
+subprojects {
+    val configureAndroid = Action<Project> {
+        if (hasProperty("android")) {
+            (extensions.findByName("android") as? com.android.build.gradle.LibraryExtension)?.apply {
+                compileSdk = 35
+            }
+        }
+    }
+    if (state.executed) {
+        configureAndroid.execute(this)
+    } else {
+        afterEvaluate(configureAndroid)
+    }
+}
+
 tasks.register<Delete>("clean") {
     delete(rootProject.layout.buildDirectory)
 }
