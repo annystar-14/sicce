@@ -44,3 +44,7 @@ app.*.map.json
 
 # Firebase Admin SDK credentials (mantener privado)
 *firebase-adminsdk*.json
+
+# Archivos locales del puente de sincronización (no subir al repo)
+puente_state.txt
+sync_zkbiotime.log
